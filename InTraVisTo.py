@@ -16,27 +16,6 @@ from app.constants import *  # pylint:disable=W0401,W0614
 from app.callbacks import generate_callbacks
 from app.layout import generate_layout
 
-# External JS scripts
-external_scripts = [
-    "https://www.google-analytics.com/analytics.js",
-    {"src": "https://cdn.polyfill.io/v2/polyfill.min.js"},
-    {
-        "src": "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.core.js",
-        "integrity": "sha256-Qqd/EfdABZUcAxjOkMi8eGEivtdTkh3b65xCZL4qAQA=",
-        "crossorigin": "anonymous"
-    }
-]
-
-# External CSS stylesheets
-external_stylesheets = [
-    "https://codepen.io/chriddyp/pen/bWLwgP.css",
-    {
-        "href": "https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css",
-        "rel": "stylesheet",
-        "integrity": "sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO",
-        "crossorigin": "anonymous"
-    }
-]
 
 pd.set_option("display.max_columns", None)
 
@@ -102,7 +81,10 @@ decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
 ###################################
 
 cache = diskcache.Cache("./cache")
-app = Dash(__name__, external_stylesheets=[dbc.themes.CERULEAN])
+
+app = Dash(__name__, external_stylesheets=[dbc.themes.MATERIA])
+
+app.title = "InTraVisTo"
 
 # TODO: fix value passed to generate functions
 app.layout = generate_layout(model_config)

@@ -64,40 +64,44 @@ def cumulative_sankey_traces(
     types = []
     # Calculate current value of node by weighting its attention value for the parent's weight
     for index, el_index, base in zip(indexes, el_indexes, bases):
-        res_w = linkinfo["attn_res_percent"][-(row + 1)][index]  # .item()
+        res_w = linkinfo["attn_res_percent"][-(row - 1)][index]  # .item()
         res_w += 0.0000000001 if res_w == 0.0 else (-0.0000000001 if res_w == 1.0 else 0)  # Prevent 0
         attn_w = 1 - res_w
-        resattn_w = linkinfo["ffnn_res_percent"][-(row + 1)][index]  # .item()
+        resattn_w = linkinfo["ffnn_res_percent"][-(row - 1)][index]  # .item()
         resattn_w += 0.0000000001 if resattn_w == 0.0 else (-0.0000000001 if resattn_w == 1.0 else 0)  # Prevent 0
         mlp_w = 1 - resattn_w
         # Create MLP / Attention / Intermediate nodes
         mlp_index = len(new_elmap.keys())
-        new_labels.append(dfs["ffnn"].iloc[row+1][index] if dfs["ffnn"] is not None else ["FFNN"])
-        new_elmap[(round(row + 1 - 0.8, 2), round(index - 0.5, 2))
+        #new_labels.append(dfs["ffnn"].iloc[row+1][index] if dfs["ffnn"] is not None else ["FFNN"])
+        new_labels.append(dfs["ffnn"][row-1][index] if dfs["ffnn"] is not None else ["FFNN"])
+        new_elmap[(round(row - 1 + 0.8, 2), round(index - 0.5, 2))
                   ] = {"id": mlp_index, "base": base * mlp_w, "type": "FFNN"}
         attn_index = len(new_elmap.keys())
-        new_labels.append(dfs["attention"].iloc[row+1][index] if dfs["attention"] is not None else ["Attention"])
-        new_elmap[(round(row + 1 - 0.45, 2), round(index - 0.5, 2))
+        #new_labels.append(dfs["attention"].iloc[row+1][index] if dfs["attention"] is not None else ["Attention"])
+        new_labels.append(dfs["attention"][row-1][index] if dfs["attention"] is not None else ["Attention"])
+        new_elmap[(round(row - 1 + 0.45, 2), round(index - 0.5, 2))
                   ] = {"id": attn_index, "base": base * attn_w, "type": "Attention"}
         hid_index = len(new_elmap.keys())
-        new_labels.append(dfs["intermediate"].iloc[row+1][index] if dfs["intermediate"] is not None else ["-"])
-        new_elmap[(round(row + 1 - 0.65, 2), index)] = {"id": hid_index, "base": base, "type": "Intermediate"}
+        #new_labels.append(dfs["intermediate"].iloc[row+1][index] if dfs["intermediate"] is not None else ["-"])
+        new_labels.append(dfs["intermediate"][row-1][index] if dfs["intermediate"] is not None else ["-"])
+        new_elmap[(round(row - 1 + 0.65, 2), index)] = {"id": hid_index, "base": base, "type": "Intermediate"}
         # Iterate over all elements of the next row
-        for i, label in enumerate(dfs["states"].iloc[row+1].tolist()):
+        #for i, label in enumerate(dfs["states"].iloc[row+1].tolist()):
+        for i, label in enumerate(dfs["states"][row-1]):
             v = base * attn_w * linkinfo["attentions"][row][index][i].item()
             if v > 0:
                 over.append(attn_index)
                 # If node is already present store its information
-                if (row+1, i) in new_elmap:
-                    under.append(new_elmap[(row+1, i)]["id"])
-                    new_elmap[(row+1, i)]["base"] += v
+                if (row-1, i) in new_elmap:
+                    under.append(new_elmap[(row-1, i)]["id"])
+                    new_elmap[(row-1, i)]["base"] += v
                 # If the node is new create a new entry in the element map with a new sankey index
                 else:
                     new_index = len(new_elmap.keys())
                     new_labels.append(label)
                     new_indexes.append(i)
                     under.append(new_index)
-                    new_elmap[(row+1, i)] = {"id": new_index, "base": v, "type": "Node"}
+                    new_elmap[(row-1, i)] = {"id": new_index, "base": v, "type": "Node"}
                 val.append(v)
                 types.append("att_in")
         # MLP State
@@ -116,22 +120,22 @@ def cumulative_sankey_traces(
         types.append("att_out")
         # Residuals
         over.append(hid_index)
-        under.append(new_elmap[(row+1, index)]["id"])
+        under.append(new_elmap[(row-1, index)]["id"])
         val.append(base * res_w)
         types.append("residual")
-        new_elmap[(row+1, index)]["base"] += base * res_w
+        new_elmap[(row-1, index)]["base"] += base * res_w
         over.append(el_index)
         under.append(hid_index)
         val.append(base * resattn_w)
         types.append("residual")
 
     # If depth limit is reached, stop recurring
-    if row + 1 < rowlimit:
+    if row - 1 > rowlimit:
         # Call itself on all the new nodes
         nex_under, nex_over, nex_val, nex_types, nex_labels, new_elmap = cumulative_sankey_traces(
             dfs, linkinfo,
-            row+1, new_indexes, [new_elmap[(row+1, i)]["id"] for i in new_indexes],
-            [new_elmap[(row+1, i)]["base"] for i in new_indexes],
+            row-1, new_indexes, [new_elmap[(row-1, i)]["id"] for i in new_indexes],
+            [new_elmap[(row-1, i)]["base"] for i in new_indexes],
             new_labels,
             new_elmap,
             rowlimit,
@@ -158,7 +162,8 @@ def generate_complete_sankey(dfs, linkinfo, sankey_parameters: SankeyParameters,
     row_index = sankey_parameters.row_index
     token_indexes = range(last_token - gen_length + 1, last_token + 1)
     token_el_indexes = range(0, gen_length)
-    token_labels = [dfs["states"].iloc[row_index].iloc[token_index] for token_index in token_indexes]
+    #token_labels = [dfs["states"].iloc[row_index].iloc[token_index] for token_index in token_indexes]
+    token_labels = [dfs["states"][row_index][token_index] for token_index in token_indexes]
     token_base_val = 1.0 / gen_length
     elmap = {
         (row_index, tidx): {"id": telidx, "base": token_base_val, "type": "Node"}
@@ -189,7 +194,8 @@ def generate_sankey(dfs, linkinfo, sankey_parameters: SankeyParameters):
 
     row_index = sankey_parameters.row_index
     token_index = sankey_parameters.token_index
-    token_label = dfs["states"].iloc[row_index].iloc[token_index]
+    #token_label = dfs["states"].iloc[row_index].iloc[token_index]
+    token_label = dfs["states"][row_index][token_index]
 
     if not sankey_parameters.show_0:
         linkinfo["attentions"] = [[[
@@ -228,10 +234,10 @@ def rescale_list(l, range_min=0, range_max=1, old_min=None, old_max=None, invert
     invert_k = 0
     invert_a = 1
     if invert:
-        invert_k = old_max
+        invert_k = old_range
         invert_a = -1
 
-    return [el if el == None else range_min + (((invert_k + (invert_a * (el - old_min))) * new_range) / old_range) for el in l]
+    return [el if el is None else range_min + (((invert_k + (invert_a * (el - old_min))) * new_range) / old_range) for el in l]
 
 # Given a list and a list of indexes that have been previously sorted, restore the original order of the list
 
@@ -297,7 +303,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
 
     # Add kl divergence values to residual links between consecutive layers
     # TODO: clamping infinite values to max value
-    max_kl = linkinfo["kl_diff"].replace([np.inf, -np.inf], np.nan).max(skipna=True).max()
+    #max_kl = linkinfo["kl_diff"].replace([np.inf, -np.inf], np.nan).max(skipna=True).max()
+    max_kl = torch.max(linkinfo["kl_diff"][torch.isfinite(linkinfo["kl_diff"])])
     def checkinf(x): return x if not np.isinf(x) else max_kl
     kl_values = [
         checkinf(linkinfo["kl_diff"][math.ceil(revmap_y[el])]
@@ -368,7 +375,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         tot_w += w
 
     # Adjust coordinates
-    revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=False)
+    revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
     revmap_y = [columns_ys[math.ceil(y) - zero_offset] + v["base"] / 2 -
                 sankey_parameters.fixed_offsets[v["type"]] for y, v in zip(revmap_y, revmap_values)]
 

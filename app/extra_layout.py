@@ -1,6 +1,5 @@
-from dash import html, dcc, callback, Output, Input, State, ctx
+from dash import html, dcc
 
-from utils import EmbeddingTypes, CellWrapper, LayerWrapper, Decoder
 from app.constants import * # pylint:disable=W0401,W0614
 from app.defaults import * # pylint:disable=W0401,W0614
 

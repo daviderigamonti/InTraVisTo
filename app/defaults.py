@@ -24,7 +24,7 @@ DEFAULT_FIGURE = go.Figure(layout={
     "width": 1900, "height": 1000,
 })
 
-DEFAULT_FONT_SIZE = 14
+DEFAULT_FONT_SIZE = 12
 DEFAULT_RUN_CONFIG = {"max_new_tok": 10}
 DEFAULT_VIS_CONFIG = {}
 DEFAULT_SANKEY_VIS_CONFIG = {
