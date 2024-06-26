@@ -89,15 +89,15 @@ def _modes():
     return dbc.Row([
         dbc.Col([
             html.H4("Decoder used"),
-            dcc.RadioItems(options=STRATEGY_MAP, value=DEFAULT_STRATEGY, id='choose_decoding')
+            dbc.RadioItems(options=DECODING_TYPE_MAP, value=DEFAULT_DECODING, id='choose_decoding')
         ]),
         dbc.Col([
             html.H4("Embedding shown"),
-            dcc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id='choose_embedding')
+            dbc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id='choose_embedding')
         ]),
         dbc.Col([
             html.H4("Colour"),
-            dcc.RadioItems(options=['P(argmax term)', 'Entropy[p]', 'Att Contribution %',
+            dbc.RadioItems(options=['P(argmax term)', 'Entropy[p]', 'Att Contribution %',
                             'FF Contribution %'], value='P(argmax term)', id='choose_colour')
         ])
     ])
@@ -110,53 +110,56 @@ def _settings(model_config):
         dbc.Row([
             dbc.Col([
                 dbc.Row([
-                    dcc.Checklist(
-                        [{"label": "hide starting token", "value": "hide"}],
+                    dbc.Checklist(
+                        [{"label": "Hide starting token", "value": "hide"}],
                         id="hide_col",
                         value=["hide"] if DEFAULT_TABLE_VIS_CONFIG["hide_col"] else [],
-                        labelStyle={"float": "left"}
+                        labelStyle={"float": "left"},
+                        switch=True,
                     ),
                 ]),
                 dbc.Row([
-                    dcc.Checklist(
-                        [{"label": "hide starting token (Sankey)", "value": "hide"}],
+                    dbc.Checklist(
+                        [{"label": "Hide starting token (Sankey)", "value": "hide"}],
                         id="hide_0",
                         value=["hide"] if not DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["show_0"] else [],
-                        labelStyle={"float": "left"}
+                        labelStyle={"float": "left"},
+                        switch=True,
                     ),
                 ]),
                 dbc.Row([
-                    dcc.Checklist(
-                        [{"label": "hide non-layer tokens (Sankey)", "value": "hide"}],
+                    dbc.Checklist(
+                        [{"label": "Hide non-layer tokens (Sankey)", "value": "hide"}],
                         id="hide_labels",
                         value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["only_nodes_labels"] else [],
-                        labelStyle={"float": "left"}
+                        labelStyle={"float": "left"},
+                        switch=True,
                     ),
                 ]),
             ]),
             dbc.Col([
                 dbc.Row([
-                    dcc.Input(
+                    dbc.Input(
                         id="max_new_tokens", type='number', value=DEFAULT_RUN_CONFIG["max_new_tok"], min=0, max=1024,
-                        className="w-25 me-2",
+                        className="w-25",
                     ),
-                    html.Label("#tokens generated"),
-                ]),
+                    html.Label("N° of tokens generated", className="w-75"),
+                ], className="d-flex align-items-center"),
                 dbc.Row([
-                    dcc.Input(
+                    dbc.Input(
                         id="font_size", type='number', value=DEFAULT_FONT_SIZE, min=1, max=72,
-                        className="w-25 me-2",
+                        className="w-25",
                     ),
-                    html.Label("font size"),
-                ]),
+                    html.Label("Font size", className="w-75"),
+                ], className="d-flex align-items-center"),
                 dbc.Row([
-                    dcc.Input(
+                    dbc.Input(
                         id="row_limit", type='number', value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["rowlimit"],
                         min=1, max=model_config.num_hidden_layers,
-                        className="w-25 me-2",
+                        className="w-25",
                     ),
-                    html.Label("Sankey depth"),
-                ]),
+                    html.Label("Sankey depth", className="w-75"),
+                ], className="d-flex align-items-center"),
             ])
         ])
     ])

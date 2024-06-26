@@ -1,11 +1,9 @@
 from typing import List, Any
 
 import dataclasses
-import pickle
 import uuid
-import time
 
-from dash import callback, Output, Input, State, ctx
+from dash import callback, Output, Input, State, ctx, ALL
 from transformers import GenerationConfig
 
 import torch
@@ -14,26 +12,9 @@ import pandas as pd
 
 from inject import INJECTS_PARAMETER, InjectInfo, InjectPosition
 from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
-from utils import EmbeddingTypes, ProbabilityType, CellWrapper, LayerWrapper, Decoder
+from utils import EmbeddingsType, ProbabilityType, CellWrapper, LayerWrapper, Decoder
 from app import extra_layout
-
-
-def extract_layer_n(x, emb_type, strategy, decoder):
-    return [decoder.decode_hidden_state(t, s, e) for e, t, s in zip(x, emb_type, strategy)]
-
-
-def extract_text(wrappers, emb_type, strategy, decoder):
-    return pd.DataFrame(wrappers).apply(lambda x: extract_layer_n(x, [emb_type]*len(x), [strategy]*len(x), decoder))
-
-# Probabilities
-
-
-def extract_layer_prob(x, decoding_strategy):
-    return [e.get_probability(d) for e, d in zip(x, decoding_strategy)]
-
-
-def extract_probabilities(wrappers, strategy):
-    return pd.DataFrame(wrappers).apply(lambda x: extract_layer_prob(x, [strategy]*len(x)))
+from app.defaults import *
 
 
 def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, prefix_tokens, device):
@@ -41,19 +22,21 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         Output('run_config', 'data'),
         [
             Input('max_new_tokens', 'value'),
-            Input("custom_emb", "value"),
-            Input("custom_emb_location", "value"),
+            Input({"type": "custom_emb", "index": ALL}, "value"),
+            Input({"type": "custom_emb_location", "index": ALL}, "value"),
         ],
         State("vis_config", "data"),
         prevent_initial_call=True,
     )
     def update_run_config(max_new_tok, custom_emb, custom_emb_location, vis_config):
+        custom_emb = custom_emb[0] if custom_emb else ""
+        custom_emb_location = custom_emb_location[0] if custom_emb_location else DEFAULT_EMB_TYPE
         return {
             "max_new_tok": max_new_tok,
             "inject_info": {
                 "text": custom_emb,
                 "location": custom_emb_location,
-                "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] != None else None,
+                "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
                 "target_token": vis_config["x"] if "x" in vis_config else None,
             }
         }
@@ -105,7 +88,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         hide_labels = len(hide_labels) > 0
         sankey_vis_config |= {
             "sankey_parameters": dataclasses.asdict(SankeyParameters(
-                row_index=0,
+                row_index=layer,
                 token_index=token,
                 rowlimit=row_limit,
                 show_0=not hide_0,
@@ -133,7 +116,9 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         return vis_config
 
     def extract_key_from_processed_layers(decoded_layers: List[List[object]], key: Any):
-        return [[cell[key] for cell in layer if key in cell] for layer in decoded_layers]
+        return [[
+            cell[key] for cell in layer if key in cell
+        ] for layer in decoded_layers]
 
     # TODO: eventually put strategy as enum
     # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
@@ -170,9 +155,9 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         inject_info = dict(run_config["inject_info"]) if "inject_info" in run_config else None
         if (
             inject_info and
-            "text" in inject_info and inject_info["text"] != None and inject_info["text"] != "" and
-            "target_layer" in inject_info and inject_info["target_layer"] != None and
-            "target_token" in inject_info and inject_info["target_token"] != None
+            "text" in inject_info and inject_info["text"] is not None and inject_info["text"] != "" and
+            "target_layer" in inject_info and inject_info["target_layer"] is not None and
+            "target_token" in inject_info and inject_info["target_token"] is not None
         ):
             inj_token = tokenizer.encode(
                 inject_info["text"],
@@ -198,10 +183,10 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
 
             # TODO: inject info creation
             inject_translate = {
-                EmbeddingTypes.BLOCK_OUTPUT : InjectPosition.OUTPUT,
-                EmbeddingTypes.POST_ATTENTION : InjectPosition.ATTENTION,
-                EmbeddingTypes.POST_FF : InjectPosition.FFNN,
-                EmbeddingTypes.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
+                EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
+                EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
+                EmbeddingsType.POST_FF : InjectPosition.FFNN,
+                EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
             }
             inject_info = [
                 InjectInfo(
@@ -236,7 +221,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         output_len = generation_result["sequence_length"] - input_len
         generation_output = {
             "sequences": generation_result["output_ids"].squeeze(),
-            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)
+            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)[:,:-1,:-1]
         }
 
         # Create a list of LayerWrapper
@@ -253,7 +238,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         per_token_layers = LayerWrapper(0, session_id=session)
         for tok_hs in hidden_states[0][:-1]:
             layer = CellWrapper()
-            layer.add_embedding(tok_hs, EmbeddingTypes.BLOCK_OUTPUT)
+            layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
             per_token_layers.cells.append(layer)
         layers.append(per_token_layers)
 
@@ -265,59 +250,55 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
 
             for tok_hs, tok_att, tok_ffnn, tok_inter in zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1]):
                 layer = CellWrapper()
-                layer.add_embedding(tok_hs, EmbeddingTypes.BLOCK_OUTPUT)
-                layer.add_embedding(tok_att, EmbeddingTypes.POST_ATTENTION)
-                layer.add_embedding(tok_ffnn, EmbeddingTypes.POST_FF)
-                layer.add_embedding(tok_inter, EmbeddingTypes.POST_ATTENTION_RESIDUAL)
+                layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+                layer.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
+                layer.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
+                layer.add_embedding(tok_inter, EmbeddingsType.POST_ATTENTION_RESIDUAL)
                 per_token_layers.cells.append(layer)
             layers.append(per_token_layers)
 
         for layer_hs, layer in zip(hidden_states, layers[1:]):
             for tok_hs, layer_token in zip(layer_hs, layer):
-                layer_token.add_embedding(tok_hs, EmbeddingTypes.BLOCK_INPUT)
+                layer_token.add_embedding(tok_hs, EmbeddingsType.BLOCK_INPUT)
 
         return generation_output, layers, input_len, output_len, session
 
+    
     @cache.memoize()
     def generate_sankey_info(text, run_config, session_id, strategy):
         generated_output, layers, input_len, output_len, session_id = model_generate(text, run_config, session_id)
 
-        # Due to parallel execution between update_graph and decode_layers, this function call might not be
-        # correctly memoized on the first call. Possibly consider executing it in a dedicated callback
-        secondary_tokens = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
-
-        secondary_tokens = secondary_tokens[1:]
+        text = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
+        p = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
 
         dfs = {
-            "states": extract_key_from_processed_layers(secondary_tokens, EmbeddingTypes.BLOCK_OUTPUT),
-            "intermediate": extract_key_from_processed_layers(secondary_tokens, EmbeddingTypes.POST_ATTENTION_RESIDUAL),
-            "attention": extract_key_from_processed_layers(secondary_tokens, EmbeddingTypes.POST_ATTENTION),
-            "ffnn": extract_key_from_processed_layers(secondary_tokens, EmbeddingTypes.POST_FF),
+            "states": extract_key_from_processed_layers(text, EmbeddingsType.BLOCK_OUTPUT),
+            "intermediate": extract_key_from_processed_layers(text, EmbeddingsType.POST_ATTENTION_RESIDUAL),
+            "attention": extract_key_from_processed_layers(text, EmbeddingsType.POST_ATTENTION),
+            "ffnn": extract_key_from_processed_layers(text, EmbeddingsType.POST_FF),
         }
 
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
-        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=decoder, _session_id=session_id + "a")
+        # TODO: Standdardize differentaitng value for session id
+        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=decoder, _session_id=session_id + "TOKEN_DIFFS")
 
-        dfs["states"] = [[(cell, diff) for cell, diff in zip(layer, layer_diff)] for layer, layer_diff in zip(dfs["states"], token_diffs)]
-        #dfs["states"] = pd.DataFrame({col: zip(dfs["states"][col], diffs[col]) for col in diffs.columns})
-
-        p = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
         attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
 
         # attentions = compute_batch_complete_padded_attentions(generated_output, range(0, model_config.num_attention_heads))[-1]
         attentions = generated_output["attentions"]
 
-        kl_diffs = torch.stack([
-            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingTypes.BLOCK_OUTPUT), dim=0)
+        kl_diffs = [
+            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.BLOCK_OUTPUT), dim=0)
             for i in range(1, len(layers))
-        ], dim=0)
-        #kl_diffs = extract_diff_kl(layers, EmbeddingTypes.BLOCK_OUTPUT).sort_index(ascending=True)
+        ]
 
+        # TODO: choose how to pass values (as torch tensors or python lists)
+        #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
         linkinfo = {
             "attentions": attentions, "attn_res_percent": attn_res_percent,
-            "ffnn_res_percent": ffnn_res_percent, "kl_diff": kl_diffs
+            "ffnn_res_percent": ffnn_res_percent, "kl_diff": kl_diffs, "diff": token_diffs
         }
 
         return dfs, linkinfo, input_len, output_len
@@ -371,7 +352,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         generated_output, layers, input_len, output_len, session_id = model_generate(text, run_config, session_id)
 
         if choose_colour == "P(argmax term)":
-            colour = ProbabilityType.ENTROPY # TODO
+            colour = ProbabilityType.ARGMAX
         elif choose_colour == "Entropy[p]":
             colour = ProbabilityType.ENTROPY
         elif choose_colour == "Att Contribution %":
@@ -386,12 +367,12 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         # Compute probabilities
         p = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
         p = extract_key_from_processed_layers(p, colour)
-        p = extract_key_from_processed_layers(p, emb_type) if colour in [ProbabilityType.ENTROPY, ProbabilityType.ENTROPY] else p
+        p = extract_key_from_processed_layers(p, emb_type) if colour in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
 
         # Remove first column from visualization
         if tab_vis_config["hide_col"]:
-            # layers = [layer[1:] for layer in layers]
-            layers = [layer.slice_cells(start=1, end=-1) for layer in layers]
+            text = [layer[1:] for layer in text]
+            p = [layer[1:] for layer in p]
 
         fig = go.Figure(
             data=go.Heatmap(
@@ -439,70 +420,6 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         # fig.add_hline(y=32, line_width=30, line_color='white')
         return fig, tokenizer.decode(generated_output["sequences"].squeeze()[input_len:])
 
-
-    # @cache.memoize()
-    # def generate_sankey_info(token, layer, text, run_config, session_id, strategy):
-    #     a = time.time()
-    #     generated_output, layers, input_len, output_len, session_id = model_generate(text, run_config, session_id)
-
-    #     # Due to parallel execution between update_graph and decode_layers, this function call might not be
-    #     # correctly memoized on the first call. Possibly consider executing it in a dedicated callback 
-    #     secondary_tokens = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
-
-
-    #     secondary_tokens = secondary_tokens[1:]
-
-    #     if token == None or layer == None:
-    #         layer = model_config.num_hidden_layers
-    #         token = input_len + output_len - 2
-
-    #     stop_layer = 0  # layer - sankey_param.rowlimit - 1
-    #     interest_layers = [layer.slice_cells(0, token + 1) for layer in layers[stop_layer: layer + 1]]
-    #     #interest_layers = [layer for layer in layers[stop_layer: layer + 1]]
-
-    #     def make_df(emb_type):
-    #         tokens = extract_embedding_from_decoded_layers(secondary_tokens, emb_type)
-    #         df = pd.DataFrame(tokens)
-    #         df = df.sort_index(ascending=False)
-    #         return df
-
-    #     b = time.time()
-    #     dfs = {
-    #         "states": make_df(EmbeddingTypes.BLOCK_OUTPUT),
-    #         "intermediate": make_df(EmbeddingTypes.POST_ATTENTION_RESIDUAL),
-    #         "attention": make_df(EmbeddingTypes.POST_ATTENTION),
-    #         "ffnn": make_df(EmbeddingTypes.POST_FF),
-    #     }
-    #     c = time.time()
-
-    #     # Add labels for differences between consecutive layers
-    #     diffs = extract_diff_text(interest_layers, EmbeddingTypes.BLOCK_OUTPUT, strategy, decoder=decoder)
-    #     dfs["states"] = pd.DataFrame({col: zip(dfs["states"].loc[col], diffs[col]) for col in diffs.columns})
-    #     d = time.time()
-
-    #     attn_res_percent = extract_probabilities(layers, "att_res_perc").values.tolist()
-    #     attn_res_percent = [el[0: token + 1] for el in attn_res_percent[stop_layer: layer + 1]]
-    #     ffnn_res_percent = extract_probabilities(layers, "ff_res_perc").values.tolist()
-    #     ffnn_res_percent = [el[0: token + 1] for el in ffnn_res_percent[stop_layer: layer + 1]]
-    #     e = time.time()
-
-    #     # attentions = compute_batch_complete_padded_attentions(generated_output, range(0, model_config.num_attention_heads))[-1]
-    #     attentions = generated_output["attentions"]
-    #     attentions = [[[e2 for e2 in e1[0: token + 1]] for e1 in row[0: token + 1]]
-    #                 for row in attentions[stop_layer: layer + 1]]
-    #     f = time.time()
-
-    #     kl_diffs = extract_diff_kl(interest_layers, EmbeddingTypes.BLOCK_OUTPUT).sort_index(ascending=True)
-
-    #     linkinfo = {"attentions": attentions, "attn_res_percent": attn_res_percent,
-    #                 "ffnn_res_percent": ffnn_res_percent, "kl_diff": kl_diffs}
-    #     g = time.time()
-
-    #     print(f"b:{b-a} c:{c-b} d:{d-c} e:{e-d} f:{f-e} g:{g-f}")
-
-    #     return dfs, linkinfo, token, layer, output_len
-
-
     @app.callback(
         Output('sankey_graph', 'figure'),
         [
@@ -519,7 +436,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
     def update_sankey(vis_config, sankey_vis_config, strategy, session_id, run_config, text):
         if (
             "x" not in vis_config or "y" not in vis_config or
-            vis_config["x"] == None or vis_config["y"] == None or
+            vis_config["x"] is None or vis_config["y"] is None or
             vis_config["x"] <= 0 or vis_config["y"] <= 0
         ):
             x, y = None, None
@@ -528,13 +445,21 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
 
         sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
         dfs, linkinfo, input_len, output_len = generate_sankey_info(text, run_config, session_id, strategy)
-        #Compat
-        sankey_param.row_index = model_config.num_hidden_layers - sankey_param.row_index - 1
-        sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
-        if x == None and y == None:
-            sankey_param.token_index = input_len + output_len - 2
+
+        if not sankey_param.show_0:
+            dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
+            linkinfo = {key: [layer[1:] for layer in link] for key, link in linkinfo.items()}
+            linkinfo["attentions"] = [[layer2[1:] for layer2 in layer1] for layer1 in linkinfo["attentions"]]
+
+        token_offset = 1 if not sankey_param.show_0 else 0
+        if x is None and y is None:
+            sankey_param.row_index = model_config.num_hidden_layers
+            sankey_param.token_index = input_len + output_len - token_offset - 2
+            sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
             sankey_info = generate_complete_sankey(dfs, linkinfo, sankey_param, output_len)
         else:
+            sankey_param.token_index -= token_offset
+            sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
             sankey_info = generate_sankey(dfs, linkinfo, sankey_param)
         fig = format_sankey(*sankey_info, linkinfo, sankey_param)
         return fig

@@ -3,11 +3,11 @@ import dataclasses
 import plotly.graph_objects as go
 
 from sankey import SankeyParameters
-from utils import EmbeddingTypes
+from utils import EmbeddingsType, DecodingType
 
 DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
-DEFAULT_EMB_TYPE = EmbeddingTypes.BLOCK_OUTPUT
-DEFAULT_STRATEGY = "interpolation"
+DEFAULT_EMB_TYPE = EmbeddingsType.BLOCK_OUTPUT
+DEFAULT_DECODING = DecodingType.LINEAR
 
 DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},
