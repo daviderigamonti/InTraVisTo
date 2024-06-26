@@ -22,16 +22,18 @@ def generate_layout(model_config):
             ]),
             html.Hr(),
             html.Div(children=[
-                dcc.Loading([
-                    dcc.Graph(figure=DEFAULT_FIGURE, id='main_graph')
-                ], id="loading-2", type="circle", overlay_style={"visibility": "visible"}),
+                dbc.Spinner(
+                    dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element"),
+                    spinner_class_name="spinner-graph", color="primary"
+                )
             ], id="tooltip-target"),
             html.Hr(),
-            dcc.Loading([
-                dcc.Graph(figure=DEFAULT_FIGURE, id='sankey_graph')
-            ], id="loading-3", type="circle"),
+            dbc.Spinner(
+                dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element"), 
+                spinner_class_name="spinner-graph", color="primary"
+            ),
             dbc.Tooltip(
-                id="graph-tooltip",target="tooltip-target", is_open=False,
+                id="graph-tooltip", target="tooltip-target", is_open=False,
                 flip=False, placement="top", autohide=False
             ),
             *_stores(),
@@ -68,7 +70,9 @@ def _generation():
                 ),
             ]),
             dbc.Col([
-                html.Button("Generate", id="generate_button", className="btn btn-primary"),
+                html.Button(children=[
+                    dbc.Spinner(html.Div("Generate", id="generate_button_load"), color="white")
+                ], id="generate_button", className="btn btn-primary"),
             ], className="col-md-auto"),
         ], className="d-flex align-items-center"),
         html.Hr(),

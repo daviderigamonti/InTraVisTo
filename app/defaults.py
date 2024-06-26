@@ -12,15 +12,6 @@ DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},
     "yaxis": {"visible": False},
-    "annotations": [{
-        "text": "No data",
-        "xref": "paper",
-        "yref": "paper",
-        "showarrow": False,
-        "font": {
-            "size": 28
-        }
-    }],
     "width": 1900, "height": 1000,
 })
 

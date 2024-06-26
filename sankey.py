@@ -164,13 +164,6 @@ def generate_complete_sankey(dfs, linkinfo, sankey_parameters: SankeyParameters,
         for tidx, telidx in zip(token_indexes, token_el_indexes)
     }
 
-    # if not sankey_parameters.show_0:
-    #     linkinfo["attentions"] = [[[
-    #         torch.tensor([0], device="cpu") if i == 0 or j == 0 else e2 for j, e2 in enumerate(e1)
-    #     ] for i, e1 in enumerate(row)
-    #     ] for row in linkinfo["attentions"]
-    #     ]
-
     # Generate diagram data
     under, over, values, types, labels, elmap = cumulative_sankey_traces(
         dfs, linkinfo,
@@ -190,13 +183,6 @@ def generate_sankey(dfs, linkinfo, sankey_parameters: SankeyParameters):
     token_index = sankey_parameters.token_index
     token_label = dfs["states"][row_index][token_index]
 
-    # if not sankey_parameters.show_0:
-    #     linkinfo["attentions"] = [[[
-    #         torch.tensor([0], device="cpu") if i == 0 or j == 0 else e2 for j, e2 in enumerate(e1)
-    #     ] for i, e1 in enumerate(row)
-    #     ] for row in linkinfo["attentions"]
-    #     ]
-
     # Generate diagram data
     under, over, values, types, labels, elmap = cumulative_sankey_traces(
         dfs, linkinfo,
@@ -212,9 +198,9 @@ def generate_sankey(dfs, linkinfo, sankey_parameters: SankeyParameters):
 
 
 def rescale_list(l, range_min=0, range_max=1, old_min=None, old_max=None, invert=False):
-    if old_max == None:
+    if old_max is None:
         old_max = max([i for i in l if i is not None])
-    if old_min == None:
+    if old_min is None:
         old_min = min([i for i in l if i is not None])
     old_range = old_max - old_min
     new_range = range_max - range_min
@@ -233,17 +219,12 @@ def rescale_list(l, range_min=0, range_max=1, old_min=None, old_max=None, invert
     return [el if el is None else range_min + (((invert_k + (invert_a * (el - old_min))) * new_range) / old_range) for el in l]
 
 # Given a list and a list of indexes that have been previously sorted, restore the original order of the list
-
-
 def restore_list_order(l, indexes):
     return [l[indexes.index(i)] for i in range(0, len(indexes))]
 
 # Return a list of RGBA color strings given a list of RGBA colors tuples
-
-
 def build_rgba_from_tuples(l, opacity=1.0):
     return [f"rgba{tuple(el) + (opacity,)}" if len(el) == 3 else f"rgba{el}" for el in l]
-
 
 def change_color_brightness(rgb_color, brightness):
     delta_color = tuple([int((channel) * brightness) for channel in rgb_color])
@@ -262,7 +243,6 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         {"text": l, "diff": ""} for l, t in zip(lab, typemap)
     ]
     if sankey_parameters.multirep:
-        #lab = [l[0][0] if t in ["Node"] else l[0] for l, t in zip(lab, typemap)]
         lab = [l[0] for l, t in zip(lab, typemap)]
     else:
         lab = [np.squeeze(l[0]) if t in ["Node"] else np.squeeze(l) for l, t in zip(lab, typemap)]
@@ -293,7 +273,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
                      for i in range(len(rescaled_elmap.keys()))]
     revmap_x = [key[0] for key in revmap]
     revmap_y = [key[1] for key in revmap]
-    # Sort reverse-mapped lists to perform transformations on them with more ease, while keeping an index list to reverse the sorting
+    # Sort reverse-mapped lists to perform transformations on them with more ease,
+    # while keeping an index list to reverse the sorting
     revmap_indexes = [i for i in range(0, len(revmap))]
     revmap_x_sort, revmap_y_sort, revmap_values_sort, revmap_indexes = zip(
         *sorted(zip(revmap_x, revmap_y, revmap_values, revmap_indexes), key=lambda x: x[0]))
@@ -306,12 +287,25 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     def checkinf(x): return x if not np.isinf(x) else max_kl
     kl_values = [
         checkinf(
-            linkinfo["kl_diff"][math.ceil(revmap_x[el])-1][math.ceil(revmap_y[el])]
+            linkinfo["kl_diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
         ).item() if typ in ["residual"] and math.ceil(revmap_y[el]) > 0 else None
         for typ, el in zip(types, un)
     ]
     def format_kl(x): return "KL: {:.0f}m nats".format(x) if x >= 10 else "KL: {:.0f}μ nats".format(x * 1000)
-    links_extra = [l | {"kl_diff": format_kl(kl * 1000) if kl is not None else ""} for l, kl in zip(links_extra, kl_values)]
+    links_extra = [
+        l | {"kl_diff": format_kl(kl * 1000) if kl is not None else ""}
+        for l, kl in zip(links_extra, kl_values)
+    ]
+
+    diff_labels = [
+        linkinfo["diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
+        if typ in ["residual"] and math.ceil(revmap_y[el]) > 0 else None
+        for typ, el in zip(types, un)
+    ]
+    links_extra = [
+        l | {"diff": f"Difference from previous layer: {diff}" if diff is not None else ""}
+        for l, diff in zip(links_extra, diff_labels)
+    ]
 
     # Build colors
     node_colors = []
@@ -323,8 +317,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     change_count = sankey_parameters.color_change_count_threshold
     color_brightness_range = sankey_parameters.color_brightness_range
     # Node colors
-    # for x, y, v in zip(revmap_x_sort, rescale_list(revmap_y_sort, range_min=color_brightness_range[0], range_max=color_brightness_range[1]), revmap_values_sort):
-    for x, y, v in zip(revmap_y_sort, rescale_list(revmap_x_sort, range_min=color_brightness_range[0], range_max=color_brightness_range[1], invert=True), revmap_values_sort):
+    for x, y, v in zip(revmap_y_sort, rescale_list(revmap_x_sort, range_min=color_brightness_range[0], range_max=color_brightness_range[1], invert=False), revmap_values_sort):
         # Color switching
         if x != old_x:
             if change_count > sankey_parameters.color_change_count_threshold:
@@ -360,7 +353,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
                      for y_index in range(0, max(revmap_y) + 1)]
     s = sum(columns_width)
     # Infer optimal column padding if not specified
-    if col_pad == None:
+    if col_pad is None:
         r = 1 - s
         col_pad = r / (len(columns_width) - 1) if r > 0 and len(columns_width) > 1 else 0
     s += col_pad * len(columns_width)
@@ -373,8 +366,10 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
 
     # Adjust coordinates
     revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
-    revmap_y = [columns_ys[math.ceil(y)] + v["base"] / 2 -
-                sankey_parameters.fixed_offsets[v["type"]] for y, v in zip(revmap_y, revmap_values)]
+    revmap_y = [
+        columns_ys[math.ceil(y)] + v["base"] / 2 - sankey_parameters.fixed_offsets[v["type"]]
+        for y, v in zip(revmap_y, revmap_values)
+    ]
 
     fig = go.Figure(go.Sankey(
         orientation="v",
@@ -392,7 +387,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         ),
         link=dict(
             customdata=links_extra,
-            hovertemplate="%{customdata.type} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<extra>%{customdata.v:.1%}</extra>",
+            hovertemplate="%{customdata.type} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
             source=ov,
             target=un,
             value=rescaled_vl,

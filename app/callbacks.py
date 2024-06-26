@@ -282,6 +282,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
         # TODO: Standdardize differentaitng value for session id
         token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=decoder, _session_id=session_id + "TOKEN_DIFFS")
+        token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
         attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
@@ -309,6 +310,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             Output('session_id', 'data'),
             Output('current_run_config', 'data'),
             Output("generation_notify", "data"),
+            Output("generate_button_load", "notify"),
         ],
         Input("generate_button", "n_clicks"),
         [
@@ -323,7 +325,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         # Caching values
         _ = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
         _ = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
-        return session_id, run_config, True
+        return session_id, run_config, True, True
 
 
     @callback(

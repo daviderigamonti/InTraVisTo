@@ -17,6 +17,8 @@ from app.callbacks import generate_callbacks
 from app.layout import generate_layout
 
 
+ASSETS_PATH = "./app/assets/"
+
 pd.set_option("display.max_columns", None)
 
 # ENVIRONMENT VARIABLES
@@ -80,9 +82,13 @@ decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
 
 ###################################
 
-cache = diskcache.Cache("./cache")
+cache = diskcache.Cache("./app/cache")
 
-app = Dash(__name__, external_stylesheets=[dbc.themes.MATERIA])
+app = Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.MATERIA],
+    assets_folder=ASSETS_PATH
+)
 
 app.title = "InTraVisTo"
 

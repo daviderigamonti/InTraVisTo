@@ -1,0 +1,14 @@
+.form-check-input[type="radio"] {
+    width: 1.3em;
+    height: 1.3em;
+}
+
+.spinner-visible-element {
+    visibility: visible;
+}
+
+.spinner-graph {
+    width: 15em;
+    height: 15em;
+    --bs-spinner-border-width: 1em;
+}
