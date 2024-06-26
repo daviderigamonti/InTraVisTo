@@ -1,6 +1,6 @@
 .form-check-input[type="radio"] {
-    width: 1.3em;
-    height: 1.3em;
+    width: 1.35em;
+    height: 1.35em;
 }
 
 .spinner-visible-element {
@@ -11,4 +11,20 @@
     width: 15em;
     height: 15em;
     --bs-spinner-border-width: 1em;
+}
+
+.inject-container {
+    height: 30vh;
+    display: flex;
+    flex-wrap: wrap;
+    overflow-y: auto;
+}
+
+.inject-card {
+    width: 16em;
+    height: 7em;
+}
+
+.inject-card p {
+    margin: 0em;
 }

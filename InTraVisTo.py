@@ -18,6 +18,7 @@ from app.layout import generate_layout
 
 
 ASSETS_PATH = "./app/assets/"
+FONT_AWESOME = "https://use.fontawesome.com/releases/v5.13.0/css/all.css"
 
 pd.set_option("display.max_columns", None)
 
@@ -86,7 +87,7 @@ cache = diskcache.Cache("./app/cache")
 
 app = Dash(
     __name__,
-    external_stylesheets=[dbc.themes.MATERIA],
+    external_stylesheets=[dbc.themes.MATERIA, FONT_AWESOME],
     assets_folder=ASSETS_PATH
 )
 

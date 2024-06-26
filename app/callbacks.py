@@ -2,8 +2,10 @@ from typing import List, Any
 
 import dataclasses
 import uuid
+import json
 
 from dash import callback, Output, Input, State, ctx, ALL
+from dash.exceptions import PreventUpdate
 from transformers import GenerationConfig
 
 import torch
@@ -487,12 +489,56 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
 
         pt = clickData["points"][0]
 
-        children = extra_layout.generate_tooltip_children_layout(
+        children = [extra_layout.generate_tooltip_children_layout(
             layer=clickData["points"][0]["y"],
             token=clickData["points"][0]["x"],
-        )
+        )]
 
         return True, "hover focus", children
+
+    
+    @callback(
+            Output("inject_container", "children", allow_duplicate=True),
+        [
+            Input("add_inj_button", "n_clicks")
+        ],
+        [
+            State("vis_config", "data"),
+            State("inject_container", "children"),
+            State("custom_emb", "value"),
+            State("custom_emb_location", "value"),
+        ],
+        prevent_initial_call=True,
+    )
+    def add_injection(button, vis_config, inject_container, custom_emb, custom_emb_location):
+        if button is None:
+            raise PreventUpdate
+        # TODO: where are target layer/token coming from?
+        target_layer = vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None
+        target_token = vis_config["x"] if "x" in vis_config else None
+        return inject_container + [extra_layout.generate_inject_card(
+            button, custom_emb, custom_emb_location, target_layer, target_token
+        )]
+
+    @app.callback(
+        Output("inject_container", "children", allow_duplicate=True),
+        [
+            Input({"type": "inject_close_button", "index": ALL}, "n_clicks"),
+        ],
+        [
+            State("inject_container", "children"),
+        ],
+        prevent_initial_call=True,
+    )
+    def manage_cards(n_close, children):
+        if n_close is None or all(v is None for v in n_close):
+            raise PreventUpdate
+
+        button_id, _ = ctx.triggered[0]["prop_id"].split(".")
+        button_id = json.loads(button_id)["index"]
+        children = [child for child in children if child["props"]["id"]["index"] != button_id]
+
+        return children
 
     # @callback(
     #     [

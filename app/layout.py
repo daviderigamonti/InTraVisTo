@@ -17,7 +17,9 @@ def generate_layout(model_config):
                     _modes(),
                 ]),
                 dbc.Col([
-                    _settings(model_config)
+                    _settings(model_config),
+                    html.Hr(),
+                    _injects(),
                 ])
             ]),
             html.Hr(),
@@ -105,6 +107,15 @@ def _modes():
                             'FF Contribution %'], value='P(argmax term)', id='choose_colour')
         ])
     ])
+
+def _injects():
+    return dbc.Container([
+        dbc.Row(
+            dbc.Col([], id="inject_container", className="inject-container")
+        ),
+    ],
+    fluid=True,
+)
 
 def _settings(model_config):
     return dbc.Col([
