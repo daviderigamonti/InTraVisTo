@@ -14,16 +14,23 @@ def generate_tooltip_children_layout(layer: int = -1, token: int = -1):
             dbc.Input(
                 type="text",
                 value="",
-                id="custom_emb",
+                id={"type": "custom_emb", "index": True},
                 debounce=False,
                 className="form-control-sm border border-primary text-white",
             )
         ], className="px-2 mb-3"),
         dbc.Row([
-            dbc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id='custom_emb_location'),
+            dbc.RadioItems(
+                options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE,
+                id={"type": "custom_emb_location", "index": True}
+            ),
         ]),
         dbc.Row([
-            html.Button("Add Injection", id="add_inj_button", className="btn btn-sm btn-primary float-end"),
+            html.Button(
+                "Add Injection",
+                id={"type": "add_inj_button", "index": True},
+                className="btn btn-sm btn-primary float-end"
+            ),
         ], className="px-2 mt-2")
     ])
 
@@ -37,7 +44,7 @@ def generate_inject_card(card_id, text, position, token, layer):
             ),
         ]),
         dbc.CardBody([
-            html.P(f"Position: {position}"),
+            html.P(f"Position: {get_label_type_map(EMB_TYPE_MAP, position)}"),
             html.P(f"Layer: {layer}, Token: {token} "),
         ])
     ], className="mb-2 me-2 inject-card text-white bg-primary", id={"type": "inject_card", "index": card_id},)

@@ -20,29 +20,46 @@ from app.defaults import *
 
 
 def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, prefix_tokens, device):
+
+    # TODO: take a look at matching callbacks ids
     @app.callback(
-        Output('run_config', 'data'),
+        [
+            Output('run_config', 'data'),
+            Output("injection_card_id", "data"),
+        ],
         [
             Input('max_new_tokens', 'value'),
-            Input({"type": "custom_emb", "index": ALL}, "value"),
-            Input({"type": "custom_emb_location", "index": ALL}, "value"),
+            Input({"type": "add_inj_button", "index": ALL}, "n_clicks"),
+            Input({"type": "inject_close_button", "index": ALL}, "n_clicks"),
         ],
-        State("vis_config", "data"),
+        [
+            State("injection_card_id", "data"),
+            State({"type": "custom_emb", "index": ALL}, "value"),
+            State({"type": "custom_emb_location", "index": ALL}, "value"),
+            State("run_config", "data"),
+            State("vis_config", "data"),
+        ],
+        
         prevent_initial_call=True,
     )
-    def update_run_config(max_new_tok, custom_emb, custom_emb_location, vis_config):
-        custom_emb = custom_emb[0] if custom_emb else ""
-        custom_emb_location = custom_emb_location[0] if custom_emb_location else DEFAULT_EMB_TYPE
-        return {
-            "max_new_tok": max_new_tok,
-            "inject_info": {
-                "text": custom_emb,
-                "location": custom_emb_location,
+    def update_run_config(max_new_tok, inj_button, inj_close_button, card_id, custom_emb, custom_emb_location, run_config, vis_config):
+        if not ctx.triggered_id:
+            raise PreventUpdate
+        run_config["max_new_tok"] = max_new_tok
+        
+        if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
+            close_button_id = ctx.triggered_id["index"]
+            run_config["injects"] = [inj for inj in run_config["injects"] if inj["id"] != close_button_id]
+        if ctx.triggered_id["type"] == "add_inj_button" and not all(v is None for v in inj_button) and custom_emb and custom_emb_location:
+            run_config["injects"] = run_config["injects"] + [{
+                "id": card_id,
+                "text": custom_emb[0],
+                "location": custom_emb_location[0],
                 "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
                 "target_token": vis_config["x"] if "x" in vis_config else None,
-            }
-        }
-
+            }]
+            card_id += 1
+        return run_config, card_id
 
     @app.callback(
         Output('vis_config', 'data'),
@@ -154,15 +171,10 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         # print(inputs.char_to_token)
         input_len = len(inputs.input_ids.squeeze().tolist())
 
-        inject_info = dict(run_config["inject_info"]) if "inject_info" in run_config else None
-        if (
-            inject_info and
-            "text" in inject_info and inject_info["text"] is not None and inject_info["text"] != "" and
-            "target_layer" in inject_info and inject_info["target_layer"] is not None and
-            "target_token" in inject_info and inject_info["target_token"] is not None
-        ):
+        injects = []
+        for inject in run_config["injects"]:
             inj_token = tokenizer.encode(
-                inject_info["text"],
+                inject["text"],
                 add_special_tokens=False,
                 return_tensors="pt"
             ).to(device).squeeze()
@@ -171,17 +183,11 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             mask = ~torch.isin(inj_token, prefix_tokens)
             inj_token = inj_token[mask]
 
-            input_emb = model.get_input_embeddings()(inj_token)
-            output_emb = model.lm_head.weight[inj_token]
-            if inj_token.size()[-1] > 1:
-                # TODO: multitoken embeddings are averaged by default
-                print("Averaged multi-tokens for embedding injection")
-                input_emb = input_emb.mean(dim=-2)
-                output_emb = output_emb.mean(dim=-2)
+            # TODO: multitoken embeddings are averaged by default
             # TODO: injected embeddings are interpolated by default
+            encoding = decoder.generate_decoding_matrix(DecodingType.LINEAR)[inject["target_layer"]]
+            print("Averaged multi-tokens for embedding injection")
             print("Interpolated embeddings for injection")
-            n_layers, layer_n = model_config.num_hidden_layers, inject_info["target_layer"] + 1
-            inject_info["embedding"] = ((n_layers - layer_n) * input_emb + layer_n * output_emb) / n_layers
 
             # TODO: inject info creation
             inject_translate = {
@@ -190,17 +196,14 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
                 EmbeddingsType.POST_FF : InjectPosition.FFNN,
                 EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
             }
-            inject_info = [
+            injects.append(
                 InjectInfo(
-                    layer=inject_info["target_layer"],
-                    token=inject_info["target_token"],
-                    position=inject_translate[inject_info["location"]],
-                    embedding=inject_info["embedding"]
+                    layer=inject["target_layer"],
+                    token=inject["target_token"],
+                    position=inject_translate[inject["location"]],
+                    embedding=torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
                 )
-            ]
-
-        else:
-            inject_info = None
+            )
 
         gen_config = GenerationConfig(
             pad_token_id=model.config.eos_token_id,
@@ -213,7 +216,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             inputs.input_ids,
             generation_config=gen_config,
             return_inner_states=True,
-            inject_info=inject_info
+            inject_info=injects
         )
 
         def standardize_wrapped_tensors(t):
@@ -350,19 +353,10 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         ],
         prevent_initial_call=True,
     )
-    def update_graph(notify, strategy, emb_type, choose_colour, tab_vis_config, vis_config, session_id, run_config, text):
+    def update_graph(notify, strategy, emb_type, colour, tab_vis_config, vis_config, session_id, run_config, text):
 
         # Retrieve model outputs
         generated_output, layers, input_len, output_len, session_id = model_generate(text, run_config, session_id)
-
-        if choose_colour == "P(argmax term)":
-            colour = ProbabilityType.ARGMAX
-        elif choose_colour == "Entropy[p]":
-            colour = ProbabilityType.ENTROPY
-        elif choose_colour == "Att Contribution %":
-            colour = ProbabilityType.ATT_RES_PERCENT
-        elif choose_colour == "FF Contribution %":
-            colour = ProbabilityType.FFNN_RES_PERCENT
 
         # Compute secondary tokens
         text = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
@@ -521,24 +515,30 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         )]
 
     @app.callback(
-        Output("inject_container", "children", allow_duplicate=True),
+        Output("inject_container", "children"),
         [
-            Input({"type": "inject_close_button", "index": ALL}, "n_clicks"),
+            Input("run_config", "data"),
         ],
         [
             State("inject_container", "children"),
         ],
         prevent_initial_call=True,
     )
-    def manage_cards(n_close, children):
-        if n_close is None or all(v is None for v in n_close):
+    def manage_inject_cards(run_config, inject_container):
+        if len(run_config["injects"]) == len(inject_container):
             raise PreventUpdate
 
-        button_id, _ = ctx.triggered[0]["prop_id"].split(".")
-        button_id = json.loads(button_id)["index"]
-        children = [child for child in children if child["props"]["id"]["index"] != button_id]
-
-        return children
+        # TODO: better to re-create each card every time or look for removed/new cards and remove/add them?
+        return [
+            extra_layout.generate_inject_card(
+                card_id=inj["id"],
+                text=inj["text"],
+                position=inj["location"],
+                token=inj["target_token"],
+                layer=inj["target_layer"]
+            )
+            for inj in run_config["injects"]
+        ]
 
     # @callback(
     #     [

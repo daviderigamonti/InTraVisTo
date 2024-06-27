@@ -103,8 +103,7 @@ def _modes():
         ]),
         dbc.Col([
             html.H4("Colour"),
-            dbc.RadioItems(options=['P(argmax term)', 'Entropy[p]', 'Att Contribution %',
-                            'FF Contribution %'], value='P(argmax term)', id='choose_colour')
+            dbc.RadioItems(options=PROB_TYPE_MAP, value=DEFAULT_PROB_TYPE, id='choose_colour')
         ])
     ])
 
@@ -187,5 +186,6 @@ def _stores():
         dcc.Store(id="sankey_vis_config", data=DEFAULT_SANKEY_VIS_CONFIG),
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),
         dcc.Store(id="generation_notify"),
+        dcc.Store(id="injection_card_id", data=0),
         dcc.Store(id="session_id")
     )

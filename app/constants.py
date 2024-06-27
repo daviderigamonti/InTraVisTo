@@ -19,3 +19,6 @@ PROB_TYPE_MAP = [
     {"label": "Attention Contribution %", "value": ProbabilityType.ATT_RES_PERCENT},
     {"label": "FFNN Contribution %", "value": ProbabilityType.FFNN_RES_PERCENT},
 ]
+
+def get_label_type_map(type_map, value):
+    return [i["label"] for i in type_map if i["value"] == value][0]
