@@ -194,27 +194,28 @@ class Decoder:
     def linear_interpolation(self, matrix_in, matrix_out):
         # TODO: n_layers + 1 because we assume that the embedding layer is also being decoded, maybe fix?
         n_layers = self.model_config.num_hidden_layers
-        return [
+        return (
             ( (n_layers - layer_n) * matrix_in + layer_n * (matrix_out) ) / n_layers
             for layer_n in range(0, n_layers + 1)
-        ]
+        )
 
     # TODO: eventually make this an enum/dictionary?
     def generate_decoding_matrix(self, decoding):
         if decoding == DecodingType.INPUT:
-            return [self.input_embedding.weight] * (self.model_config.num_hidden_layers + 1)
+            return ( self.input_embedding.weight for _ in range(self.model_config.num_hidden_layers + 1) )
         elif decoding == DecodingType.OUTPUT:
-            return [self.output_embedding.weight] * (self.model_config.num_hidden_layers + 1)
+            return ( self.output_embedding.weight for _ in  range(self.model_config.num_hidden_layers + 1) )
         elif decoding == DecodingType.LINEAR:
             return self.linear_interpolation(self.input_embedding.weight, self.output_embedding.weight)
     
     def decode(self, layers: List[LayerWrapper], decoding):
         decoding_matrix = self.generate_decoding_matrix(decoding)
-        return [self.decode_layer(layer, decoding_matrix) for layer in layers]
-
-    def decode_layer(self, layer: LayerWrapper, decoding_matrix):
-        decoding_matrix = decoding_matrix[layer.layer_number]
-        return [self.decode_cell(cell, decoding_matrix) for cell in layer]
+        return [
+            [
+                self.decode_cell(cell, dm)
+                for cell in layer
+            ] for layer, dm in zip(layers, decoding_matrix)
+        ]
 
     def decode_cell(self, cell: CellWrapper, decoding_matrix):
         decoded_cell = {}
@@ -245,11 +246,12 @@ class Decoder:
 
     def compute_probabilities(self, layers: List[LayerWrapper], decoding):
         decoding_matrix = self.generate_decoding_matrix(decoding)
-        return [self.compute_layer(layer, decoding_matrix) for layer in layers]
-
-    def compute_layer(self, layer: LayerWrapper, decoding_matrix):
-        decoding_matrix = decoding_matrix[layer.layer_number]
-        return [self.compute_cell(cell, decoding_matrix) for cell in layer]
+        return [
+            [
+                self.compute_cell(cell, dm)
+                for cell in layer
+            ] for layer, dm in zip(layers, decoding_matrix)
+        ]
 
     # TODO: Horrible
     def compute_cell(self, cell: CellWrapper, decoding_matrix):

@@ -2,7 +2,6 @@ from typing import List, Any
 
 import dataclasses
 import uuid
-import json
 
 from dash import callback, Output, Input, State, ctx, ALL
 from dash.exceptions import PreventUpdate
@@ -12,11 +11,13 @@ import torch
 import plotly.graph_objects as go
 import pandas as pd
 
-from inject import INJECTS_PARAMETER, InjectInfo, InjectPosition
+# TODO: put these values inside classes
 from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
 from utils import EmbeddingsType, ProbabilityType, CellWrapper, LayerWrapper, Decoder
 from app import extra_layout
-from app.defaults import *
+from app.defaults import * # pylint:disable=W0401,W0614
+
+from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
 
 def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, prefix_tokens, device):
@@ -47,18 +48,19 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             raise PreventUpdate
         run_config["max_new_tok"] = max_new_tok
         
-        if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
-            close_button_id = ctx.triggered_id["index"]
-            run_config["injects"] = [inj for inj in run_config["injects"] if inj["id"] != close_button_id]
-        if ctx.triggered_id["type"] == "add_inj_button" and not all(v is None for v in inj_button) and custom_emb and custom_emb_location:
-            run_config["injects"] = run_config["injects"] + [{
-                "id": card_id,
-                "text": custom_emb[0],
-                "location": custom_emb_location[0],
-                "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
-                "target_token": vis_config["x"] if "x" in vis_config else None,
-            }]
-            card_id += 1
+        if "type" in ctx.triggered_id:
+            if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
+                close_button_id = ctx.triggered_id["index"]
+                run_config["injects"] = [inj for inj in run_config["injects"] if inj["id"] != close_button_id]
+            if ctx.triggered_id["type"] == "add_inj_button" and not all(v is None for v in inj_button) and custom_emb and custom_emb_location:
+                run_config["injects"] = run_config["injects"] + [{
+                    "id": card_id,
+                    "text": custom_emb[0],
+                    "location": custom_emb_location[0],
+                    "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
+                    "target_token": vis_config["x"] if "x" in vis_config else None,
+                }]
+                card_id += 1
         return run_config, card_id
 
     @app.callback(
@@ -159,8 +161,6 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         if args:
             raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
         return decoder.compute_probabilities(layers, decoding=strategy)
-        
-    
 
     @cache.memoize()
     def model_generate(prompt, run_config, session):
@@ -185,7 +185,10 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
 
             # TODO: multitoken embeddings are averaged by default
             # TODO: injected embeddings are interpolated by default
-            encoding = decoder.generate_decoding_matrix(DecodingType.LINEAR)[inject["target_layer"]]
+            encoding = decoder.generate_decoding_matrix(DecodingType.LINEAR)
+            # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
+            _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
+            encoding = next(encoding)
             print("Averaged multi-tokens for embedding injection")
             print("Interpolated embeddings for injection")
 
@@ -212,12 +215,13 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             return_feed_forward_output=True,
             return_intermediate_hidden_states=True,
         )
-        generation_result = model.generate(
-            inputs.input_ids,
-            generation_config=gen_config,
-            return_inner_states=True,
-            inject_info=injects
-        )
+        wrapper_gen_config = {
+            "generation_config": gen_config,
+            "return_inner_states": True,
+            model.INJECTS_PARAMETER: injects
+        }
+
+        generation_result = model.generate(inputs.input_ids, **wrapper_gen_config)
 
         def standardize_wrapped_tensors(t):
             s = torch.stack(t, dim=0).squeeze().detach()
@@ -330,6 +334,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         # Caching values
         _ = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
         _ = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
+        # TODO: maybe add? # torch.cuda.empty_cache()
         return session_id, run_config, True, True
 
 

@@ -10,11 +10,12 @@ import torch
 import dash_bootstrap_components as dbc
 import pandas as pd
 
-from inject import InjectCausalLMWrapper
 from utils import Decoder
 from app.constants import *  # pylint:disable=W0401,W0614
 from app.callbacks import generate_callbacks
 from app.layout import generate_layout
+
+from transformer_wrappers.wrappers import InjectCausalLMWrapper # pylint:disable=E0401,E0611
 
 
 ASSETS_PATH = "./app/assets/"
@@ -71,6 +72,7 @@ MODEL_CONFIG = {
 TOKENIZER_CONFIG = {
     "token": hf_auth,
 }
+
 
 model = InjectCausalLMWrapper.from_pretrained(
     model_id, model_kwargs=MODEL_CONFIG,
