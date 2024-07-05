@@ -20,5 +20,13 @@ PROB_TYPE_MAP = [
     {"label": "FFNN Contribution %", "value": ProbabilityType.FFNN_RES_PERCENT},
 ]
 
+MODEL_MAP = [
+    {"label": "Llama 2 ", "value": "meta-llama/Llama-2-7b-hf"},
+    {"label": "Mistral Instruct", "value": "mistralai/Mistral-7B-Instruct-v0.2"},
+]
+
+HEARTBEAT_INTERVAL = 10 # Seconds
+HEARTBEAT_TIMEOUT = 20 # Seconds
+
 def get_label_type_map(type_map, value):
     return [i["label"] for i in type_map if i["value"] == value][0]

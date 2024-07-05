@@ -9,6 +9,8 @@ DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
 DEFAULT_EMB_TYPE = EmbeddingsType.BLOCK_OUTPUT
 DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
+DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
+DEFAULT_INITIAL_CALLS = ["update_output", "call_model_generate"]
 
 DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},

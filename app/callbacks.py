@@ -1,9 +1,13 @@
 from typing import List, Any
 
 import dataclasses
+import inspect
 import uuid
+import time
+import gc
+import os
 
-from dash import callback, Output, Input, State, ctx, ALL
+from dash import Output, Input, State, ctx, no_update, ALL
 from dash.exceptions import PreventUpdate
 from transformers import GenerationConfig
 
@@ -13,14 +17,210 @@ import pandas as pd
 
 # TODO: put these values inside classes
 from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
-from utils import EmbeddingsType, ProbabilityType, CellWrapper, LayerWrapper, Decoder
+from utils import ModelUtils, EmbeddingsType, ProbabilityType, CellWrapper, LayerWrapper, Decoder
 from app import extra_layout
+from app.constants import * # pylint:disable=W0401,W0614
 from app.defaults import * # pylint:disable=W0401,W0614
 
 from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
 
-def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, prefix_tokens, device):
+def generate_callbacks(app, cache, models, models_lock, device):
+
+    def extract_key_from_processed_layers(decoded_layers: List[List[object]], key: Any):
+        return [[
+            cell[key] for cell in layer if key in cell
+        ] for layer in decoded_layers]
+
+    # TODO: eventually put strategy as enum
+    # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
+    #       argument of cache.memoize
+    @cache.memoize(ignore={"layers", "decoder"})
+    def decode_layers(
+        *args, layers, strategy: str, decoder: Decoder, _session_id: str
+    ):
+        if args:
+            raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
+        return decoder.decode(layers, decoding=strategy)
+
+    # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
+    #       argument of cache.memoize
+    @cache.memoize(ignore={"layers", "decoder"})
+    def compute_probabilities(
+        *args, layers, strategy: str, decoder: Decoder, _session_id: str
+    ):
+        if args:
+            raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
+        return decoder.compute_probabilities(layers, decoding=strategy)
+
+    @cache.memoize()
+    def model_generate(prompt, model_id, run_config, session):
+        with models_lock:
+            model = models[model_id]
+        inputs = model.tokenizer(prompt, return_tensors="pt").to(device)
+        # Generate
+        # output = model(inputs.input_ids, return_dict=True, output_hidden_states=True, output_attentions=True)
+        # print(f"Input len: {inputs.input_ids.shape}")
+        # print(inputs.char_to_token)
+        input_len = len(inputs.input_ids.squeeze().tolist())
+
+        injects = []
+        for inject in run_config["injects"]:
+            inj_token = model.tokenizer.encode(
+                inject["text"],
+                add_special_tokens=False,
+                return_tensors="pt"
+            ).to(device).squeeze()
+
+            # Remove eventual prefix tokens
+            mask = ~torch.isin(inj_token, model.prefix_tokens)
+            inj_token = inj_token[mask]
+
+            # TODO: multitoken embeddings are averaged by default
+            # TODO: injected embeddings are interpolated by default
+            encoding = model.decoder.generate_decoding_matrix(DecodingType.LINEAR)
+            # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
+            _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
+            encoding = next(encoding)
+            print("Averaged multi-tokens for embedding injection")
+            print("Interpolated embeddings for injection")
+
+            # TODO: inject info creation
+            inject_translate = {
+                EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
+                EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
+                EmbeddingsType.POST_FF : InjectPosition.FFNN,
+                EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
+            }
+            injects.append(
+                InjectInfo(
+                    layer=inject["target_layer"],
+                    token=inject["target_token"],
+                    position=inject_translate[inject["location"]],
+                    embedding=torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
+                )
+            )
+
+        gen_config = GenerationConfig(
+            pad_token_id=model.model_config.eos_token_id,
+            max_new_tokens=run_config["max_new_tok"],
+            return_attention_output=True,
+            return_feed_forward_output=True,
+            return_intermediate_hidden_states=True,
+        )
+        wrapper_gen_config = {
+            "generation_config": gen_config,
+            "return_inner_states": True,
+            model.model.INJECTS_PARAMETER: injects
+        }
+
+        generation_result = model.model.generate(inputs.input_ids, **wrapper_gen_config)
+
+        def standardize_wrapped_tensors(t):
+            s = torch.stack(t, dim=0).squeeze().detach()
+            return s
+
+        output_len = generation_result["sequence_length"] - input_len
+        generation_output = {
+            "sequences": generation_result["output_ids"].squeeze(),
+            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)[:,:-1,:-1]
+        }
+
+        # Create a list of LayerWrapper
+        layers = []
+
+        hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])
+        attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])
+        feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])
+        intermediate_hidden_state = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
+
+        # 1- Prepare matrix of input tokens hidden_state:  N_TOKENS x N_LAYER
+        # input_hidden_states = generation_result["hidden_states"][0]
+
+        per_token_layers = LayerWrapper(0, session_id=session)
+        for tok_hs in hidden_states[0][:-1]:
+            layer = CellWrapper()
+            layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+            per_token_layers.cells.append(layer)
+        layers.append(per_token_layers)
+
+        # TODO: fix variable names
+        # Iterate over layers
+        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_state)):
+            # Iterate over tokens
+            per_token_layers = LayerWrapper(layer_id + 1, session_id=session)
+
+            for tok_hs, tok_att, tok_ffnn, tok_inter in zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1]):
+                layer = CellWrapper()
+                layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+                layer.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
+                layer.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
+                layer.add_embedding(tok_inter, EmbeddingsType.POST_ATTENTION_RESIDUAL)
+                per_token_layers.cells.append(layer)
+            layers.append(per_token_layers)
+
+        for layer_hs, layer in zip(hidden_states, layers[1:]):
+            for tok_hs, layer_token in zip(layer_hs, layer):
+                layer_token.add_embedding(tok_hs, EmbeddingsType.BLOCK_INPUT)
+
+        return generation_output, layers, input_len, output_len, session
+
+    
+    @cache.memoize()
+    def generate_sankey_info(text, model_id, run_config, session_id, strategy):
+        with models_lock:
+            model = models[model_id]
+        generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
+
+        text = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
+        p = compute_probabilities(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
+
+        dfs = {
+            "states": extract_key_from_processed_layers(text, EmbeddingsType.BLOCK_OUTPUT),
+            "intermediate": extract_key_from_processed_layers(text, EmbeddingsType.POST_ATTENTION_RESIDUAL),
+            "attention": extract_key_from_processed_layers(text, EmbeddingsType.POST_ATTENTION),
+            "ffnn": extract_key_from_processed_layers(text, EmbeddingsType.POST_FF),
+        }
+
+        # Add labels for differences between consecutive layers
+        diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
+        # TODO: Standdardize differentaitng value for session id
+        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=model.decoder, _session_id=session_id + "TOKEN_DIFFS")
+        token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
+
+        attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
+        ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
+
+        # attentions = compute_batch_complete_padded_attentions(generated_output, range(0, model_config.num_attention_heads))[-1]
+        attentions = generated_output["attentions"]
+
+        kl_diffs = [
+            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.BLOCK_OUTPUT), dim=0)
+            for i in range(1, len(layers))
+        ]
+
+        # TODO: choose how to pass values (as torch tensors or python lists)
+        #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
+        linkinfo = {
+            "attentions": attentions, "attn_res_percent": attn_res_percent,
+            "ffnn_res_percent": ffnn_res_percent, "kl_diff": kl_diffs, "diff": token_diffs
+        }
+
+        return dfs, linkinfo, input_len, output_len
+
+
+    @app.callback(
+        Output("initial_callbacks", "data"),
+        Input("initial_callbacks", "empty"),
+        State("initial_callbacks", "data")
+    )
+    def initial_call(_, initial_callbacks):
+        return initial_callbacks
+
+    def process_initial_call(initial_callbacks):
+        if initial_callbacks[0] == inspect.stack()[1].function:
+            return initial_callbacks[1:]
+        raise PreventUpdate
 
     # TODO: take a look at matching callbacks ids
     @app.callback(
@@ -40,7 +240,6 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             State("run_config", "data"),
             State("vis_config", "data"),
         ],
-        
         prevent_initial_call=True,
     )
     def update_run_config(max_new_tok, inj_button, inj_close_button, card_id, custom_emb, custom_emb_location, run_config, vis_config):
@@ -136,209 +335,40 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         vis_config |= {"hide_col": len(hide_col) > 0}
         return vis_config
 
-    def extract_key_from_processed_layers(decoded_layers: List[List[object]], key: Any):
-        return [[
-            cell[key] for cell in layer if key in cell
-        ] for layer in decoded_layers]
-
-    # TODO: eventually put strategy as enum
-    # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
-    #       argument of cache.memoize
-    @cache.memoize(ignore={"layers", "decoder"})
-    def decode_layers(
-        *args, layers, strategy: str, decoder: Decoder, _session_id: str
-    ):
-        if args:
-            raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
-        return decoder.decode(layers, decoding=strategy)
-
-    # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
-    #       argument of cache.memoize
-    @cache.memoize(ignore={"layers", "decoder"})
-    def compute_probabilities(
-        *args, layers, strategy: str, decoder: Decoder, _session_id: str
-    ):
-        if args:
-            raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
-        return decoder.compute_probabilities(layers, decoding=strategy)
-
-    @cache.memoize()
-    def model_generate(prompt, run_config, session):
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        # Generate
-        # output = model(inputs.input_ids, return_dict=True, output_hidden_states=True, output_attentions=True)
-        # print(f"Input len: {inputs.input_ids.shape}")
-        # print(inputs.char_to_token)
-        input_len = len(inputs.input_ids.squeeze().tolist())
-
-        injects = []
-        for inject in run_config["injects"]:
-            inj_token = tokenizer.encode(
-                inject["text"],
-                add_special_tokens=False,
-                return_tensors="pt"
-            ).to(device).squeeze()
-
-            # Remove eventual prefix tokens
-            mask = ~torch.isin(inj_token, prefix_tokens)
-            inj_token = inj_token[mask]
-
-            # TODO: multitoken embeddings are averaged by default
-            # TODO: injected embeddings are interpolated by default
-            encoding = decoder.generate_decoding_matrix(DecodingType.LINEAR)
-            # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
-            _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
-            encoding = next(encoding)
-            print("Averaged multi-tokens for embedding injection")
-            print("Interpolated embeddings for injection")
-
-            # TODO: inject info creation
-            inject_translate = {
-                EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
-                EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
-                EmbeddingsType.POST_FF : InjectPosition.FFNN,
-                EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
-            }
-            injects.append(
-                InjectInfo(
-                    layer=inject["target_layer"],
-                    token=inject["target_token"],
-                    position=inject_translate[inject["location"]],
-                    embedding=torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
-                )
-            )
-
-        gen_config = GenerationConfig(
-            pad_token_id=model.config.eos_token_id,
-            max_new_tokens=run_config["max_new_tok"],
-            return_attention_output=True,
-            return_feed_forward_output=True,
-            return_intermediate_hidden_states=True,
-        )
-        wrapper_gen_config = {
-            "generation_config": gen_config,
-            "return_inner_states": True,
-            model.INJECTS_PARAMETER: injects
-        }
-
-        generation_result = model.generate(inputs.input_ids, **wrapper_gen_config)
-
-        def standardize_wrapped_tensors(t):
-            s = torch.stack(t, dim=0).squeeze().detach()
-            return s
-
-        output_len = generation_result["sequence_length"] - input_len
-        generation_output = {
-            "sequences": generation_result["output_ids"].squeeze(),
-            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)[:,:-1,:-1]
-        }
-
-        # Create a list of LayerWrapper
-        layers = []
-
-        hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])
-        attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])
-        feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])
-        intermediate_hidden_state = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
-
-        # 1- Prepare matrix of input tokens hidden_state:  N_TOKENS x N_LAYER
-        # input_hidden_states = generation_result["hidden_states"][0]
-
-        per_token_layers = LayerWrapper(0, session_id=session)
-        for tok_hs in hidden_states[0][:-1]:
-            layer = CellWrapper()
-            layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
-            per_token_layers.cells.append(layer)
-        layers.append(per_token_layers)
-
-        # TODO: fix variable names
-        # Iterate over layers
-        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_state)):
-            # Iterate over tokens
-            per_token_layers = LayerWrapper(layer_id + 1, session_id=session)
-
-            for tok_hs, tok_att, tok_ffnn, tok_inter in zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1]):
-                layer = CellWrapper()
-                layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
-                layer.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
-                layer.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
-                layer.add_embedding(tok_inter, EmbeddingsType.POST_ATTENTION_RESIDUAL)
-                per_token_layers.cells.append(layer)
-            layers.append(per_token_layers)
-
-        for layer_hs, layer in zip(hidden_states, layers[1:]):
-            for tok_hs, layer_token in zip(layer_hs, layer):
-                layer_token.add_embedding(tok_hs, EmbeddingsType.BLOCK_INPUT)
-
-        return generation_output, layers, input_len, output_len, session
-
-    
-    @cache.memoize()
-    def generate_sankey_info(text, run_config, session_id, strategy):
-        generated_output, layers, input_len, output_len, session_id = model_generate(text, run_config, session_id)
-
-        text = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
-        p = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
-
-        dfs = {
-            "states": extract_key_from_processed_layers(text, EmbeddingsType.BLOCK_OUTPUT),
-            "intermediate": extract_key_from_processed_layers(text, EmbeddingsType.POST_ATTENTION_RESIDUAL),
-            "attention": extract_key_from_processed_layers(text, EmbeddingsType.POST_ATTENTION),
-            "ffnn": extract_key_from_processed_layers(text, EmbeddingsType.POST_FF),
-        }
-
-        # Add labels for differences between consecutive layers
-        diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
-        # TODO: Standdardize differentaitng value for session id
-        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=decoder, _session_id=session_id + "TOKEN_DIFFS")
-        token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
-
-        attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
-        ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
-
-        # attentions = compute_batch_complete_padded_attentions(generated_output, range(0, model_config.num_attention_heads))[-1]
-        attentions = generated_output["attentions"]
-
-        kl_diffs = [
-            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.BLOCK_OUTPUT), dim=0)
-            for i in range(1, len(layers))
-        ]
-
-        # TODO: choose how to pass values (as torch tensors or python lists)
-        #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
-        linkinfo = {
-            "attentions": attentions, "attn_res_percent": attn_res_percent,
-            "ffnn_res_percent": ffnn_res_percent, "kl_diff": kl_diffs, "diff": token_diffs
-        }
-
-        return dfs, linkinfo, input_len, output_len
-
-
-    @callback(
+    @app.callback(
         [
+            Output("initial_callbacks", "data", allow_duplicate=True),
             Output('session_id', 'data'),
             Output('current_run_config', 'data'),
             Output("generation_notify", "data"),
             Output("generate_button_load", "notify"),
         ],
-        Input("generate_button", "n_clicks"),
         [
-            State('text', 'value'),
-            State('run_config', 'data'),
+            Input("initial_callbacks", "data"),
+            Input("generate_button", "n_clicks"),
+        ],
+        [
+            State("text", "value"),
+            State("model_id", "data"),
+            State("run_config", "data"),
             State('choose_decoding', 'value'),
         ],
+        prevent_initial_call=True,
     )
-    def call_model_generate(button, text, run_config, strategy):
+    def call_model_generate(initial_callbacks, button, text, model_id, run_config, strategy):
+        initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
+        with models_lock:
+            model = models[model_id]
         session_id = str(uuid.uuid4())
-        _, layers, _, _, _ = model_generate(text, run_config, session_id)
+        _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
         # Caching values
-        _ = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
-        _ = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
+        _ = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
+        _ = compute_probabilities(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
         # TODO: maybe add? # torch.cuda.empty_cache()
-        return session_id, run_config, True, True
+        return initial_callbacks, session_id, run_config, True, True
 
 
-    @callback(
+    @app.callback(
         [
             Output('main_graph', 'figure'),
             Output('output_text', 'value'),
@@ -352,23 +382,25 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             Input("vis_config", "data")
         ],
         [
-            State('session_id', 'data'),
-            State('current_run_config', 'data'),
-            State('text', 'value'),
+            State("text", "value"),
+            State("model_id", "data"),
+            State("current_run_config", "data"),
+            State("session_id", "data"),
         ],
         prevent_initial_call=True,
     )
-    def update_graph(notify, strategy, emb_type, colour, tab_vis_config, vis_config, session_id, run_config, text):
-
+    def update_graph(notify, strategy, emb_type, colour, tab_vis_config, vis_config, text, model_id, run_config, session_id):
+        with models_lock:
+            model = models[model_id]
         # Retrieve model outputs
-        generated_output, layers, input_len, output_len, session_id = model_generate(text, run_config, session_id)
+        generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
 
         # Compute secondary tokens
-        text = decode_layers(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
+        text = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
         text = extract_key_from_processed_layers(text, emb_type)
 
         # Compute probabilities
-        p = compute_probabilities(layers=layers, strategy=strategy, decoder=decoder, _session_id=session_id)
+        p = compute_probabilities(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
         p = extract_key_from_processed_layers(p, colour)
         p = extract_key_from_processed_layers(p, emb_type) if colour in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
 
@@ -384,7 +416,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
                 xgap=2,
                 ygap=2,
                 x=[i - 0.5 for i in range(0, input_len + output_len)],
-                y=list(range(0, model_config.num_hidden_layers + 1)),
+                y=list(range(0, model.model_config.num_hidden_layers + 1)),
                 hovertemplate='<i>Probability</i>: %{z:.2f}%' +
                 '<br><b>Layer</b>: %{y}' +
                 '<br><b>Token position</b>: %{x}' +
@@ -421,7 +453,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
                 line_width=2, line_color="red"
             )
         # fig.add_hline(y=32, line_width=30, line_color='white')
-        return fig, tokenizer.decode(generated_output["sequences"].squeeze()[input_len:])
+        return fig, model.tokenizer.decode(generated_output["sequences"].squeeze()[input_len:])
 
     @app.callback(
         Output('sankey_graph', 'figure'),
@@ -431,12 +463,16 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             Input('choose_decoding', 'value'),
         ],
         [
-            State('session_id', 'data'),
-            State('current_run_config', 'data'),
-            State('text', 'value'),
+            State("text", "value"),
+            State("model_id", "data"),
+            State("current_run_config", "data"),
+            State("session_id", "data"),
         ],
+        prevent_initial_call=True,
     )
-    def update_sankey(vis_config, sankey_vis_config, strategy, session_id, run_config, text):
+    def update_sankey(vis_config, sankey_vis_config, strategy, text, model_id, run_config, session_id):
+        with models_lock:
+            model = models[model_id]
         if (
             "x" not in vis_config or "y" not in vis_config or
             vis_config["x"] is None or vis_config["y"] is None or
@@ -447,7 +483,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             x, y = vis_config["x"], vis_config["y"]
 
         sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
-        dfs, linkinfo, input_len, output_len = generate_sankey_info(text, run_config, session_id, strategy)
+        dfs, linkinfo, input_len, output_len = generate_sankey_info(text, model_id, run_config, session_id, strategy)
 
         if not sankey_param.show_0:
             dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
@@ -456,7 +492,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
 
         token_offset = 1 if not sankey_param.show_0 else 0
         if x is None and y is None:
-            sankey_param.row_index = model_config.num_hidden_layers
+            sankey_param.row_index = model.model_config.num_hidden_layers
             sankey_param.token_index = input_len + output_len - token_offset - 2
             sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
             sankey_info = generate_complete_sankey(dfs, linkinfo, sankey_param, output_len)
@@ -468,7 +504,26 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         return fig
 
 
-    @callback(
+    @app.callback(
+        [
+            Output("initial_callbacks", "data", allow_duplicate=True),
+            Output("model_id", "data"),
+        ],
+        [
+            Input("initial_callbacks", "data"),
+            Input("model_select", "value"),
+        ],
+        prevent_initial_call=True,
+    )
+    def update_output(initial_callbacks, model_id):
+        nonlocal models
+        initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
+        with models_lock:
+            if model_id not in models:
+                models |= {model_id: ModelUtils(model_id, device, quant=True, hf_token=os.environ["HF_TOKEN"])}
+        return initial_callbacks, model_id
+
+    @app.callback(
         [
             Output("graph-tooltip", "is_open", allow_duplicate=True),
             Output("graph-tooltip", "trigger"),
@@ -496,7 +551,7 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
         return True, "hover focus", children
 
     
-    @callback(
+    @app.callback(
             Output("inject_container", "children", allow_duplicate=True),
         [
             Input("add_inj_button", "n_clicks")
@@ -545,17 +600,24 @@ def generate_callbacks(app, cache, model, decoder, model_config, tokenizer, pref
             for inj in run_config["injects"]
         ]
 
-    # @callback(
-    #     [
-    #         Output("graph-tooltip", "show", allow_duplicate=True),
-    #         Output("graph-tooltip", "children", allow_duplicate=True),
-    #     ],
-    #     Input("graph-tooltip", "hoverData"),
-    #     prevent_initial_call=True,
-    # )
-    # def delete_embedding_tooltip(hoverData):
-    #     print(hoverData)
-    #     if hoverData is None:
-    #         return False, []
-    #     else:
-    #         return no_update, no_update
+    @app.callback(
+        Input("model_heartbeat", "n_intervals"),
+        State("model_id", "data"),
+        prevent_initial_call=True,
+    )
+    def update_active_models(n_intervals, model_id):
+        with models_lock:
+            # Check for models with dead sessions and remove them
+            cur = time.time()
+            # TODO: Consider if it's necessary to separate the check-dead callback from the heartbeat callback
+            # Delete models with expired timestamp while avoid deleting model of current session
+            dead = [mid for mid, model in models.items() if cur - model.heartbeat_stamp > HEARTBEAT_TIMEOUT and mid != model_id]
+            if dead:
+                for mid in dead: 
+                    del models[mid]
+                gc.collect()
+                # TODO: add check for device
+                torch.cuda.empty_cache()
+            # Revive current model
+            cur = time.time()
+            models[model_id].heartbeat_stamp = cur

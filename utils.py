@@ -1,11 +1,18 @@
 from enum import Enum
 from typing import List, Self
 
+import time
 import re
 
-import torch
 from torch.distributions import Categorical
+from torch import bfloat16
+from transformers import AutoTokenizer
 from scipy.special import kl_div # (ufuncs in scipy.special are written in C) pylint:disable=E0611
+
+import transformers
+import torch
+
+from transformer_wrappers.wrappers import InjectCausalLMWrapper # pylint:disable=E0401,E0611
 
 
 DEFAULT_SESSION_ID = "0"
@@ -27,20 +34,6 @@ class DecodingType(str, Enum):
     INPUT = "input"
     OUTPUT = "output"
     LINEAR = "linear_interpolation"
-
-# class ProbabilityType(Enum):
-#     ATT_RES_PERCENT = (
-#         "compute_prob_residual",
-#         {"emb_res": EmbeddingsType.BLOCK_INPUT, "emb": EmbeddingsType.POST_ATTENTION}
-#     )
-#     FFNN_RES_PERCENT = (
-#         "compute_prob_residual",
-#         {"emb_res": EmbeddingsType.POST_ATTENTION_RESIDUAL, "emb": EmbeddingsType.POST_FF}
-#     )
-#     ENTROPY = (
-#         "compute_prob_entropy", {}
-#     )
-
 
 class CellWrapper:
     def __init__(self, layer_number=-1, token_number=-1, emb_keys=(), emb_block=torch.Tensor(), probabilities=None):
@@ -282,10 +275,62 @@ class Decoder:
         argmax =  {}
         for k in cell.embeddings.keys():
             _, probs, pred_id = cell.get_logits_info(k, decoding_matrix)
-            entropy[k] = Categorical(probs=probs).entropy().detach().float().cpu()
+            entropy[k] = Categorical(probs=probs, validate_args=False).entropy().detach().float().cpu()
             argmax[k] = probs[pred_id].detach().float().cpu()
 
         res[ProbabilityType.ENTROPY] = entropy
         res[ProbabilityType.ARGMAX] = argmax
 
         return res
+
+class ModelUtils:
+    def __init__(self, model_id, device, quant=False, hf_token=None):
+        self.id = model_id
+        self.is_quantized = quant
+        self.tokenizer, self.model, self.model_config, self.decoder = self._load_model(
+            model_id, device, quant, hf_token
+        )
+        self.heartbeat_stamp = time.time()
+
+    def _load_model(self, model_id, device, quant, hf_token):
+        quant_config = transformers.BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=bfloat16,
+        ) if quant else None
+        model_config = transformers.AutoConfig.from_pretrained(
+            model_id,
+            output_attentions=True,
+            output_hidden_states=True,
+            output_scores=True,
+            token=hf_token,
+        )
+
+        tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
+
+        # TODO: find a solution for this
+        # Compute prefix tokens (9 is a random number)
+        prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).squeeze()
+        prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
+
+        MODEL_CONFIG = {
+            "trust_remote_code": True,
+            "device_map": device,
+            "token": hf_token,
+            "torch_dtype": bfloat16,
+        }
+
+        TOKENIZER_CONFIG = {
+            "token": hf_token,
+        }
+
+        model = InjectCausalLMWrapper.from_pretrained(
+            model_id, model_kwargs=MODEL_CONFIG,
+            quantization_configs=quant_config,
+            tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
+        )
+        model.enable_wrapper()
+
+        decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
+        return tokenizer, model, model_config, decoder

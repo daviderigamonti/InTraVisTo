@@ -39,6 +39,7 @@ def generate_layout(model_config):
                 flip=False, placement="top", autohide=False
             ),
             *_stores(),
+            dcc.Interval(id="model_heartbeat", interval=HEARTBEAT_INTERVAL * 1000),
         ], className="container-fluid pt-2")
     ])
 
@@ -124,6 +125,17 @@ def _settings(model_config):
         dbc.Row([
             dbc.Col([
                 dbc.Row([
+                    dbc.Col(["Model:"], className="col-md-auto"),
+                    dbc.Col([
+                        dbc.Select(
+                            id="model_select",
+                            options=MODEL_MAP,
+                            value=DEFAULT_MODEL,
+                            className="form-select borderpx-1 w-100"
+                        )
+                    ], className="me-5"),
+                ], className="d-flex align-items-center"),
+                dbc.Row([
                     dbc.Checklist(
                         [{"label": "Hide starting token", "value": "hide"}],
                         id="hide_col",
@@ -187,5 +199,7 @@ def _stores():
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),
         dcc.Store(id="generation_notify"),
         dcc.Store(id="injection_card_id", data=0),
+        dcc.Store(id="model_id", data=DEFAULT_MODEL),
+        dcc.Store(id="initial_callbacks", data=DEFAULT_INITIAL_CALLS),
         dcc.Store(id="session_id")
     )
