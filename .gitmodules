@@ -1,4 +1,4 @@
 [submodule "submodules/transformer_wrappers"]
 	path = submodules/transformer_wrappers
 	url = git@github.com:vincenzo-scotti/transformer_wrappers.git
-	branch = dev-gradient-ckpt
+	branch = dev
