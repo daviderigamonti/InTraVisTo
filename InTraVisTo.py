@@ -49,7 +49,7 @@ app = Dash(
     external_stylesheets=[dbc.themes.MATERIA, FONT_AWESOME],
     assets_folder=ASSETS_PATH,
     title=TITLE,
-    update_title=TITLE, # Avoid "Updating..." title while processing callbacks
+    update_title=TITLE + "‎", # Avoid "Updating..." title while processing callbacks, invisible character is needed to avoid having equal title and update_title, leading to "undefined" title
 )
 
 # TODO: fix value passed to generate functions

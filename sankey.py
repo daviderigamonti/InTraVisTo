@@ -26,7 +26,15 @@ class SankeyParameters:
     node_opacity: float = 0.7  # Opacity of nodes
     link_opacity: float = 0.4  # Opacity of links
     non_residual_link_color: tuple[int, int, int] = (100, 100, 100)  # Default color for non-resiudal links
-    default_node_color: tuple[int, int, int] = (220, 220, 220)  # Default color for nodes
+    node_color_map: dict[str, float] = field(
+        default_factory=lambda: {
+            "Default": (220, 220, 220),
+            "Node": (220, 220, 220),
+            "FFNN": (220, 220, 220),
+            "Attention": (220, 220, 220),
+            "Intermediate": (220, 220, 220)
+        }
+    )
     color_nodes: bool = False  # If set to true, color nodes based on the colormap, otherwise all nodes will have their default color
     extra_brightness_map: dict[str, float] = field(
         default_factory=lambda: {"Node": -0.5, "FFNN": 0.15, "Attention": -0.15, "Intermediate": -0.3})
@@ -288,7 +296,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     kl_values = [
         checkinf(
             linkinfo["kl_diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
-        ).item() if typ in ["residual"] and math.ceil(revmap_y[el]) > 0 else None
+        ).item() if typ in ["residual", "mlp_in"] else None
         for typ, el in zip(types, un)
     ]
     def format_kl(x): return "KL: {:.0f}m nats".format(x) if x >= 10 else "KL: {:.0f}μ nats".format(x * 1000)
@@ -326,10 +334,11 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
             change_count += 1
         color_ref = change_color_brightness(px.colors.hex_to_rgb(current_color), y)
         node_colors_ref.append(color_ref)
-        actual_color = sankey_parameters.default_node_color
-        if sankey_parameters.color_nodes:
-            actual_color = px.colors.hex_to_rgb(current_color)
-        color = change_color_brightness(actual_color, y + sankey_parameters.extra_brightness_map[v["type"]])
+        color = px.colors.hex_to_rgb(current_color) if sankey_parameters.color_nodes else sankey_parameters.node_color_map[v["type"]]
+        #actual_color = sankey_parameters.node_color_map["Default"]
+        #if sankey_parameters.color_nodes:
+        #    actual_color = px.colors.hex_to_rgb(current_color)
+        #color = change_color_brightness(actual_color, y + sankey_parameters.extra_brightness_map[v["type"]])
         node_colors.append(color)
         old_x = x
     node_colors = restore_list_order(node_colors, revmap_indexes)
