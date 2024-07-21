@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
+from collections import defaultdict
 from itertools import cycle
 
+import heapq
 import math
 
 import torch
@@ -29,25 +31,24 @@ class SankeyParameters:
     node_color_map: dict[str, float] = field(
         default_factory=lambda: {
             "Default": (220, 220, 220),
-            "Node": (220, 220, 220),
-            "FFNN": (220, 220, 220),
-            "Attention": (220, 220, 220),
-            "Intermediate": (220, 220, 220)
+            "Node": (33, 150, 243),
+            "FFNN": (107, 185, 247),
+            "Attention": (144, 203, 249),
+            "Intermediate": (26, 166, 227)
         }
     )
     color_nodes: bool = False  # If set to true, color nodes based on the colormap, otherwise all nodes will have their default color
-    extra_brightness_map: dict[str, float] = field(
-        default_factory=lambda: {"Node": -0.5, "FFNN": 0.15, "Attention": -0.15, "Intermediate": -0.3})
     # LAYOUT
     print_indexes: bool = False
     only_nodes_labels: bool = False
     rescale_factor: int = 3
     fixed_offsets: dict[str, float] = field(
-        default_factory=lambda: {"Node": 0, "FFNN": 0.02, "Attention": 0.02, "Intermediate": 0})
+        default_factory=lambda: {"Node": 0, "FFNN": 0.02, "Attention": 0.02, "Intermediate": 0}
+    )
     column_pad: float = None
     # Correction to avoid feeding nodes with a coordinate value of 0, which causes problems with Plotly Sankey Diagrams
     sankey_zero: float = 0.000000000000001
-    font_size: float = 14  # Text font size
+    font_size: float = 12  # Text font size
     size: int = 1800  # Size of square canvas
 
 
@@ -232,7 +233,7 @@ def restore_list_order(l, indexes):
 
 # Return a list of RGBA color strings given a list of RGBA colors tuples
 def build_rgba_from_tuples(l, opacity=1.0):
-    return [f"rgba{tuple(el) + (opacity,)}" if len(el) == 3 else f"rgba{el}" for el in l]
+    return [f"rgba{tuple(el) + (opacity,)}" if len(el) == 3 else f"rgba{tuple(el)}" for el in l]
 
 def change_color_brightness(rgb_color, brightness):
     delta_color = tuple([int((channel) * brightness) for channel in rgb_color])
@@ -268,6 +269,17 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     for k, el in elmap.items():
         nodes_extra[el["id"]] = nodes_extra[el["id"]] | {"v": el["base"]}
     links_extra = [{"v": v, "type": t} for v, t in zip(vl, types)]
+
+    # Create a map containing attention links with largest values for each node
+    # TODO: hardcoded k = 1
+    k = 1
+    max_link_list = defaultdict(list)
+    for el_ov, el_un, typ, value in zip(ov, un, types, vl):
+        if typ == "att_in":
+            heapq.heappush(max_link_list[el_ov], (value, el_un))
+            if len(max_link_list[el_ov]) > k:
+                heapq.heappop(max_link_list[el_ov])
+    max_link_list = {k: [tup[1] for tup in v] for k, v in max_link_list.items()}
 
     # Rescale node and link values by a rescale factor to fit into graph
     rescale_factor = sankey_parameters.rescale_factor
@@ -335,23 +347,28 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         color_ref = change_color_brightness(px.colors.hex_to_rgb(current_color), y)
         node_colors_ref.append(color_ref)
         color = px.colors.hex_to_rgb(current_color) if sankey_parameters.color_nodes else sankey_parameters.node_color_map[v["type"]]
-        #actual_color = sankey_parameters.node_color_map["Default"]
-        #if sankey_parameters.color_nodes:
-        #    actual_color = px.colors.hex_to_rgb(current_color)
-        #color = change_color_brightness(actual_color, y + sankey_parameters.extra_brightness_map[v["type"]])
         node_colors.append(color)
         old_x = x
     node_colors = restore_list_order(node_colors, revmap_indexes)
     node_colors_ref = restore_list_order(node_colors_ref, revmap_indexes)
+
     # Link colors
-    link_colors = [node_colors_ref[el] if typ in ["residual", "att_in", "mlp_in"]
-                   else sankey_parameters.non_residual_link_color for typ, el in zip(types, un)]
-    link_colors = [
-        # TODO hardcoded color
-        # TODO kl values for color visualization are a bit off due to their range
-        change_color_brightness((255, 99, 71), kl) if kl is not None else color
-        for color, kl in zip(link_colors, rescale_list(kl_values, invert=True))
-    ]
+    link_colors = []
+    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(kl_values, invert=True)):
+        color = sankey_parameters.non_residual_link_color.copy()
+        # Color residuals according todifference of kl divergence
+        if kl is not None:
+            # TODO hardcoded color
+            # TODO kl values for color visualization are a bit off due to their range
+            color = change_color_brightness((255, 99, 71), kl)
+        elif typ in ["att_in"]:
+            # Color attention following max attention values
+            if el in max_link_list[el_ov]:
+                color = node_colors_ref[el]
+            else:
+                color += [0.1]
+        link_colors.append(color)
+
     # Convert colors and add opacities
     node_colors = build_rgba_from_tuples(node_colors, sankey_parameters.node_opacity)
     link_colors = build_rgba_from_tuples(link_colors, sankey_parameters.link_opacity)
