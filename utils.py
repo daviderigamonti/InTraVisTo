@@ -34,6 +34,11 @@ class DecodingType(str, Enum):
     INPUT = "input"
     OUTPUT = "output"
     LINEAR = "linear_interpolation"
+    QUADRATIC = "quadratic_interpolation"
+
+class ResidualContribution(str, Enum):
+    NORM = "norm"
+    KL_DIV = "kl_divergence"
 
 class CellWrapper:
     def __init__(self, layer_number=-1, token_number=-1, emb_keys=(), emb_block=torch.Tensor(), probabilities=None):
@@ -165,7 +170,7 @@ class LayerWrapper:
         ]
 
     def compute_probabilities(self, emb_type, decoder, decoding, return_0_on_error: bool = False):
-        decoding_matrix = decoder.generate_decoding_matrix(decoding)[self.layer_number]
+        decoding_matrix = decoder.decoding_matrix[decoding]()[self.layer_number]
         return [{
             prob: getattr(cell, prob.value[0])(
                 **prob.value[1],
@@ -183,6 +188,16 @@ class Decoder:
         self.input_embedding = model.get_input_embeddings()
         self.max_rep = max_rep
         self.model_config = model_config
+        self.decoding_matrix = {
+            DecodingType.INPUT:
+                lambda: ( self.input_embedding.weight for _ in range(self.model_config.num_hidden_layers + 1) ),
+            DecodingType.OUTPUT:
+                lambda: ( self.output_embedding.weight for _ in  range(self.model_config.num_hidden_layers + 1) ),
+            DecodingType.LINEAR:
+                lambda: self.linear_interpolation(self.input_embedding.weight, self.output_embedding.weight),
+            DecodingType.QUADRATIC:
+                lambda: self.quadratic_interpolation(self.input_embedding.weight, self.output_embedding.weight),
+        }
 
     def linear_interpolation(self, matrix_in, matrix_out):
         # TODO: n_layers + 1 because we assume that the embedding layer is also being decoded, maybe fix?
@@ -192,17 +207,16 @@ class Decoder:
             for layer_n in range(0, n_layers + 1)
         )
 
-    # TODO: eventually make this an enum/dictionary?
-    def generate_decoding_matrix(self, decoding):
-        if decoding == DecodingType.INPUT:
-            return ( self.input_embedding.weight for _ in range(self.model_config.num_hidden_layers + 1) )
-        elif decoding == DecodingType.OUTPUT:
-            return ( self.output_embedding.weight for _ in  range(self.model_config.num_hidden_layers + 1) )
-        elif decoding == DecodingType.LINEAR:
-            return self.linear_interpolation(self.input_embedding.weight, self.output_embedding.weight)
+    def quadratic_interpolation(self, matrix_in, matrix_out):
+        # TODO: n_layers + 1 because we assume that the embedding layer is also being decoded, maybe fix?
+        n_layers = self.model_config.num_hidden_layers
+        return (
+            ( (n_layers ** 2 - layer_n ** 2) * matrix_in + (layer_n ** 2) * (matrix_out) ) / n_layers
+            for layer_n in range(0, n_layers + 1)
+        )
     
     def decode(self, layers: List[LayerWrapper], decoding):
-        decoding_matrix = self.generate_decoding_matrix(decoding)
+        decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
                 self.decode_cell(cell, dm)
@@ -237,49 +251,63 @@ class Decoder:
             decoded_cell[k] = secondary_tokens
         return decoded_cell
 
-    def compute_probabilities(self, layers: List[LayerWrapper], decoding):
-        decoding_matrix = self.generate_decoding_matrix(decoding)
+    def compute_probabilities(self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution):
+        decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                self.compute_cell(cell, dm)
+                self.compute_cell(cell, dm, residual_contribution)
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
 
     # TODO: Horrible
-    def compute_cell(self, cell: CellWrapper, decoding_matrix):
+    def compute_cell(self, cell: CellWrapper, decoding_matrix, residual_contribution: ResidualContribution):
 
         res = {}
 
-        if EmbeddingsType.BLOCK_INPUT not in cell.embeddings or EmbeddingsType.POST_ATTENTION not in cell.embeddings:
-            res |= {ProbabilityType.ATT_RES_PERCENT: torch.tensor(0.0)}
-        else:
-            initial_residual = cell.embeddings[EmbeddingsType.BLOCK_INPUT]
-            x_emb = cell.embeddings[EmbeddingsType.POST_ATTENTION]
-            res |= {ProbabilityType.ATT_RES_PERCENT: (
-                    initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
-                ).squeeze().detach().float().cpu()
-            }
-
-        if EmbeddingsType.POST_ATTENTION_RESIDUAL not in cell.embeddings or EmbeddingsType.POST_FF not in cell.embeddings:
-            res |= {ProbabilityType.FFNN_RES_PERCENT: torch.tensor(0.0)}
-        else:
-            initial_residual = cell.embeddings[EmbeddingsType.POST_ATTENTION_RESIDUAL]
-            x_emb = cell.embeddings[EmbeddingsType.POST_FF]
-            res |= {ProbabilityType.FFNN_RES_PERCENT : (
-                    initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
-                ).squeeze().detach().float().cpu()
-            }
-
         entropy = {}
         argmax =  {}
+        emb_probs = {}
         for k in cell.embeddings.keys():
             _, probs, pred_id = cell.get_logits_info(k, decoding_matrix)
+            emb_probs[k] = probs.float().detach().cpu()
             entropy[k] = Categorical(probs=probs, validate_args=False).entropy().detach().float().cpu()
             argmax[k] = probs[pred_id].detach().float().cpu()
 
         res[ProbabilityType.ENTROPY] = entropy
         res[ProbabilityType.ARGMAX] = argmax
+
+        if EmbeddingsType.BLOCK_INPUT not in cell.embeddings or EmbeddingsType.POST_ATTENTION not in cell.embeddings:
+            res |= {ProbabilityType.ATT_RES_PERCENT: torch.tensor(0.0)}
+        else:
+            if residual_contribution == ResidualContribution.NORM:
+                initial_residual = cell.embeddings[EmbeddingsType.BLOCK_INPUT]
+                x_emb = cell.embeddings[EmbeddingsType.POST_ATTENTION]
+                res_percent = (
+                    initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
+                ).squeeze().detach().float().cpu()
+            # TODO: slow
+            elif residual_contribution == ResidualContribution.KL_DIV:
+                kldiv_res = sum(kl_div(emb_probs[EmbeddingsType.BLOCK_INPUT], emb_probs[EmbeddingsType.POST_ATTENTION_RESIDUAL]))
+                kldiv_att = sum(kl_div(emb_probs[EmbeddingsType.POST_ATTENTION], emb_probs[EmbeddingsType.POST_ATTENTION_RESIDUAL]))
+                res_percent = kldiv_att / (kldiv_res + kldiv_att)
+            res |= {ProbabilityType.ATT_RES_PERCENT: res_percent}
+
+        if EmbeddingsType.POST_ATTENTION_RESIDUAL not in cell.embeddings or EmbeddingsType.POST_FF not in cell.embeddings:
+            res |= {ProbabilityType.FFNN_RES_PERCENT: torch.tensor(0.0)}
+        else:
+            if residual_contribution == ResidualContribution.NORM:
+                initial_residual = cell.embeddings[EmbeddingsType.POST_ATTENTION_RESIDUAL]
+                x_emb = cell.embeddings[EmbeddingsType.POST_FF]
+                res_percent = (
+                    initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
+                ).squeeze().detach().float().cpu()
+            # TODO: slow
+            elif residual_contribution == ResidualContribution.KL_DIV:
+                kldiv_res = sum(kl_div(emb_probs[EmbeddingsType.POST_ATTENTION_RESIDUAL], emb_probs[EmbeddingsType.BLOCK_OUTPUT]))
+                kldiv_ffn = sum(kl_div(emb_probs[EmbeddingsType.POST_FF], emb_probs[EmbeddingsType.BLOCK_OUTPUT]))
+                res_percent = kldiv_ffn / (kldiv_res + kldiv_ffn)
+            res |= {ProbabilityType.FFNN_RES_PERCENT: res_percent}
 
         return res
 

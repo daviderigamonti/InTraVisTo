@@ -1,8 +1,9 @@
-from utils import EmbeddingsType, DecodingType, ProbabilityType
+from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
 
 DECODING_TYPE_MAP = [
     {"label": "Output Decoder", "value": DecodingType.OUTPUT},
     {"label": "Linear Interpolation", "value": DecodingType.LINEAR},
+    {"label": "Quadratic Interpolation", "value": DecodingType.QUADRATIC},
     {"label": "Input Encoder", "value": DecodingType.INPUT},
 ]
 
@@ -18,6 +19,11 @@ PROB_TYPE_MAP = [
     {"label": "Entropy[p]", "value": ProbabilityType.ENTROPY},
     {"label": "Attention Contribution %", "value": ProbabilityType.ATT_RES_PERCENT},
     {"label": "FFNN Contribution %", "value": ProbabilityType.FFNN_RES_PERCENT},
+]
+
+RES_TYPE_MAP = [
+    {"label": "Norm proportion", "value": ResidualContribution.NORM},
+    {"label": "KL Divergence proportion", "value": ResidualContribution.KL_DIV},
 ]
 
 MODEL_MAP = [

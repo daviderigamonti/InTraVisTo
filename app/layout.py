@@ -93,20 +93,28 @@ def _generation():
     ])
 
 def _modes():
-    return dbc.Row([
-        dbc.Col([
-            html.H4("Decoder used"),
-            dbc.RadioItems(options=DECODING_TYPE_MAP, value=DEFAULT_DECODING, id='choose_decoding')
+    return dbc.Row([dbc.Col([
+        dbc.Row([
+            dbc.Col([
+                html.H4("Decoder used"),
+                dbc.RadioItems(options=DECODING_TYPE_MAP, value=DEFAULT_DECODING, id='choose_decoding')
+            ]),
+            dbc.Col([
+                html.H4("Embedding shown"),
+                dbc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id='choose_embedding')
+            ]),
+            dbc.Col([
+                html.H4("Colour"),
+                dbc.RadioItems(options=PROB_TYPE_MAP, value=DEFAULT_PROB_TYPE, id='choose_colour')
+            ])
         ]),
-        dbc.Col([
-            html.H4("Embedding shown"),
-            dbc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id='choose_embedding')
-        ]),
-        dbc.Col([
-            html.H4("Colour"),
-            dbc.RadioItems(options=PROB_TYPE_MAP, value=DEFAULT_PROB_TYPE, id='choose_colour')
+        dbc.Row([
+            dbc.Col([
+                html.H4("Residual contribution"),
+                dbc.RadioItems(options=RES_TYPE_MAP, value=DEFAULT_RES_TYPE, id='choose_res_type')
+            ]),
         ])
-    ])
+    ])])
 
 def _injects():
     return dbc.Container([

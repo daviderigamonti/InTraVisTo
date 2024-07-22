@@ -17,7 +17,7 @@ import pandas as pd
 
 # TODO: put these values inside classes
 from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
-from utils import ModelUtils, EmbeddingsType, ProbabilityType, CellWrapper, LayerWrapper, Decoder
+from utils import ModelUtils, EmbeddingsType, ProbabilityType, ResidualContribution, CellWrapper, LayerWrapper, Decoder
 from app import extra_layout
 from app.constants import * # pylint:disable=W0401,W0614
 from app.defaults import * # pylint:disable=W0401,W0614
@@ -47,11 +47,11 @@ def generate_callbacks(app, cache, models, models_lock, device):
     #       argument of cache.memoize
     @cache.memoize(ignore={"layers", "decoder"})
     def compute_probabilities(
-        *args, layers, strategy: str, decoder: Decoder, _session_id: str
+        *args, layers, strategy: str, residual_contribution: ResidualContribution, decoder: Decoder, _session_id: str
     ):
         if args:
-            raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
-        return decoder.compute_probabilities(layers, decoding=strategy)
+            raise TypeError(f"Found positional argument(s) in compute_probabilities function {args}")
+        return decoder.compute_probabilities(layers, decoding=strategy, residual_contribution=residual_contribution)
 
     @cache.memoize()
     def model_generate(prompt, model_id, run_config, session):
@@ -167,13 +167,19 @@ def generate_callbacks(app, cache, models, models_lock, device):
 
     
     @cache.memoize()
-    def generate_sankey_info(text, model_id, run_config, session_id, strategy):
+    def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution):
         with models_lock:
             model = models[model_id]
         generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
 
         text = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
-        p = compute_probabilities(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
+        p = compute_probabilities(
+            layers=layers,
+            strategy=strategy,
+            residual_contribution=residual_contribution,
+            decoder=model.decoder,
+            _session_id=session_id,
+        )
 
         dfs = {
             "states": extract_key_from_processed_layers(text, EmbeddingsType.BLOCK_OUTPUT),
@@ -184,7 +190,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
 
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
-        # TODO: Standdardize differentaitng value for session id
+        # TODO: Standardize differentiating value for session id
         token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=model.decoder, _session_id=session_id + "TOKEN_DIFFS")
         token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
@@ -267,6 +273,8 @@ def generate_callbacks(app, cache, models, models_lock, device):
         [
             Input("generation_notify", "data"),
             Input("main_graph", "clickData"),
+            Input("choose_decoding", "value"),
+            Input("choose_res_type", "value"),
         ],
         [
             State('hide_col', 'value'),
@@ -274,11 +282,13 @@ def generate_callbacks(app, cache, models, models_lock, device):
         ],
         prevent_initial_call=True,
     )
-    def update_vis_config(gen_notify, clickData, hide_col, vis_config):
+    def update_vis_config(gen_notify, click_data, strategy, res_contrib, hide_col, vis_config):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
         col_0_offset = 1 if len(hide_col) > 0 else 0
-        vis_config |= {"x": clickData["points"][0]["x"] + col_0_offset} if clickData else {"x": None}
-        vis_config |= {"y": clickData["points"][0]["y"]} if clickData else {"y": None}
+        vis_config |= {"x": click_data["points"][0]["x"] + col_0_offset} if click_data else {"x": None}
+        vis_config |= {"y": click_data["points"][0]["y"]} if click_data else {"y": None}
+        vis_config |= {"strategy": strategy}
+        vis_config |= {"res_contrib": res_contrib}
         if ctx.triggered_id == "generation_notify":
             vis_config |= {"x": None, "y": None}
         return vis_config
@@ -301,8 +311,8 @@ def generate_callbacks(app, cache, models, models_lock, device):
         prevent_initial_call=True,
     )
     def update_sankey_vis_config(gen_notify, vis_config, row_limit, hide_0, hide_labels, font_size, hide_col, sankey_vis_config):
-        token = vis_config["x"] if "x" in vis_config and vis_config["x"] != None else 0
-        layer = vis_config["y"] if "y" in vis_config and vis_config["y"] != None else 0
+        token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
+        layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
         row_limit = row_limit if layer - row_limit - 1 >= 0 or layer == 0 else layer
         hide_0 = len(hide_0) > 0
         hide_labels = len(hide_labels) > 0
@@ -324,15 +334,19 @@ def generate_callbacks(app, cache, models, models_lock, device):
         [
             Input('hide_col', 'value'),
             Input('font_size', 'value'),
+            Input("choose_embedding", "value"),
+            Input("choose_colour", "value"),
         ],
         [
             State('table_vis_config', 'data'),
         ],
         prevent_initial_call=True,
     )
-    def update_table_vis_config(hide_col, font_size, vis_config):
-        vis_config |= {"font_size": font_size}
+    def update_table_vis_config(hide_col, font_size, emb_type, colour, vis_config):
         vis_config |= {"hide_col": len(hide_col) > 0}
+        vis_config |= {"font_size": font_size}
+        vis_config |= {"emb_type": emb_type}
+        vis_config |= {"colour": colour}
         return vis_config
 
     @app.callback(
@@ -351,19 +365,25 @@ def generate_callbacks(app, cache, models, models_lock, device):
             State("text", "value"),
             State("model_id", "data"),
             State("run_config", "data"),
-            State('choose_decoding', 'value'),
+            State("vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
-    def call_model_generate(initial_callbacks, button, text, model_id, run_config, strategy):
+    def call_model_generate(initial_callbacks, button, text, model_id, run_config, vis_config):
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
         with models_lock:
             model = models[model_id]
         session_id = str(uuid.uuid4())
         _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
         # Caching values
-        _ = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
-        _ = compute_probabilities(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
+        _ = decode_layers(layers=layers, strategy=vis_config["strategy"], decoder=model.decoder, _session_id=session_id)
+        _ = compute_probabilities(
+            layers=layers,
+            strategy=vis_config["strategy"],
+            residual_contribution=vis_config["res_contrib"],
+            decoder=model.decoder,
+            _session_id=session_id,
+        )
         # TODO: maybe add? # torch.cuda.empty_cache()
         return initial_callbacks, session_id, run_config, True, True
 
@@ -375,10 +395,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
         ],
         [
             Input('generation_notify', 'data'),
-            Input('choose_decoding', 'value'),
-            Input('choose_embedding', 'value'),
-            Input("choose_colour", "value"),
-            Input('table_vis_config', 'data'),
+            Input("table_vis_config", "data"),
             Input("vis_config", "data")
         ],
         [
@@ -389,20 +406,28 @@ def generate_callbacks(app, cache, models, models_lock, device):
         ],
         prevent_initial_call=True,
     )
-    def update_graph(notify, strategy, emb_type, colour, tab_vis_config, vis_config, text, model_id, run_config, session_id):
+    def update_graph(
+        notify, tab_vis_config, vis_config, text, model_id, run_config, session_id
+    ):
         with models_lock:
             model = models[model_id]
         # Retrieve model outputs
         generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
 
         # Compute secondary tokens
-        text = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
-        text = extract_key_from_processed_layers(text, emb_type)
+        text = decode_layers(layers=layers, strategy=vis_config["strategy"], decoder=model.decoder, _session_id=session_id)
+        text = extract_key_from_processed_layers(text, tab_vis_config["emb_type"])
 
         # Compute probabilities
-        p = compute_probabilities(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
-        p = extract_key_from_processed_layers(p, colour)
-        p = extract_key_from_processed_layers(p, emb_type) if colour in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
+        p = compute_probabilities(
+            layers=layers,
+            strategy=vis_config["strategy"],
+            residual_contribution=vis_config["res_contrib"],
+            decoder=model.decoder,
+            _session_id=session_id,
+        )
+        p = extract_key_from_processed_layers(p, tab_vis_config["colour"])
+        p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
 
         # Remove first column from visualization
         if tab_vis_config["hide_col"]:
@@ -445,7 +470,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=2, line_color='darkblue')
         fig.add_hline(y=0.5, line_width=8, line_color='white')
         fig.add_hline(y=0.5, line_width=2, line_color='darkblue')
-        if vis_config["x"] != None and vis_config["y"] != None:
+        if vis_config["x"] is not None and vis_config["y"] is not None:
             offset = 0 if tab_vis_config["hide_col"] else 1
             fig.add_shape(
                 x0=vis_config["x"] + offset - 0.5, x1=vis_config["x"] + offset - 1.5,
@@ -460,7 +485,6 @@ def generate_callbacks(app, cache, models, models_lock, device):
         [
             Input("vis_config", "data"),
             Input('sankey_vis_config', 'data'),
-            Input('choose_decoding', 'value'),
         ],
         [
             State("text", "value"),
@@ -470,7 +494,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
         ],
         prevent_initial_call=True,
     )
-    def update_sankey(vis_config, sankey_vis_config, strategy, text, model_id, run_config, session_id):
+    def update_sankey(vis_config, sankey_vis_config, text, model_id, run_config, session_id):
         with models_lock:
             model = models[model_id]
         if (
@@ -483,7 +507,9 @@ def generate_callbacks(app, cache, models, models_lock, device):
             x, y = vis_config["x"], vis_config["y"]
 
         sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
-        dfs, linkinfo, input_len, output_len = generate_sankey_info(text, model_id, run_config, session_id, strategy)
+        dfs, linkinfo, input_len, output_len = generate_sankey_info(
+            text, model_id, run_config, session_id, vis_config["strategy"], vis_config["res_contrib"]
+        )
 
         if not sankey_param.show_0:
             dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
@@ -502,7 +528,6 @@ def generate_callbacks(app, cache, models, models_lock, device):
             sankey_info = generate_sankey(dfs, linkinfo, sankey_param)
         fig = format_sankey(*sankey_info, linkinfo, sankey_param)
         return fig
-
 
     @app.callback(
         [
@@ -537,15 +562,13 @@ def generate_callbacks(app, cache, models, models_lock, device):
         State("graph-tooltip", "autohide"),
         prevent_initial_call=True,
     )
-    def display_embedding_tooltip(gen_notify, clickData, gtt, autohide):
-        if clickData is None or ctx.triggered_id == "generation_notify":
+    def display_embedding_tooltip(gen_notify, click_data, gtt, autohide):
+        if click_data is None or ctx.triggered_id == "generation_notify":
             return False, "", []
 
-        pt = clickData["points"][0]
-
         children = [extra_layout.generate_tooltip_children_layout(
-            layer=clickData["points"][0]["y"],
-            token=clickData["points"][0]["x"],
+            layer=click_data["points"][0]["y"],
+            token=click_data["points"][0]["x"],
         )]
 
         return True, "hover focus", children
@@ -605,7 +628,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
         State("model_id", "data"),
         prevent_initial_call=True,
     )
-    def update_active_models(n_intervals, model_id):
+    def update_active_models(_, model_id):
         with models_lock:
             # Check for models with dead sessions and remove them
             cur = time.time()
