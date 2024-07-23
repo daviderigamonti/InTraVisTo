@@ -78,7 +78,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
 
             # TODO: multitoken embeddings are averaged by default
             # TODO: injected embeddings are interpolated by default
-            encoding = model.decoder.generate_decoding_matrix(DecodingType.LINEAR)
+            encoding = model.decoder.decoding_matrix[DecodingType.LINEAR]()
             # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
             _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
             encoding = next(encoding)
@@ -115,6 +115,16 @@ def generate_callbacks(app, cache, models, models_lock, device):
         }
 
         generation_result = model.model.generate(inputs.input_ids, **wrapper_gen_config)
+        # TODO: test wrong last token
+        #gen_config = GenerationConfig(
+        #    output_attentions=True,
+        #    output_hidden_states=True,
+        #    #output_scores=True,
+        #    return_dict_in_generate=True,
+        #    pad_token_id=model.model_config.eos_token_id,
+        #    max_new_tokens=run_config["max_new_tok"],
+        #)
+        #generation_result = model.model.generate(inputs.input_ids, generation_config=gen_config)
 
         def standardize_wrapped_tensors(t):
             s = torch.stack(t, dim=0).squeeze().detach()
@@ -132,7 +142,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
         hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])
         attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])
         feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])
-        intermediate_hidden_state = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
+        intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
 
         # 1- Prepare matrix of input tokens hidden_state:  N_TOKENS x N_LAYER
         # input_hidden_states = generation_result["hidden_states"][0]
@@ -146,7 +156,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
 
         # TODO: fix variable names
         # Iterate over layers
-        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_state)):
+        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
             # Iterate over tokens
             per_token_layers = LayerWrapper(layer_id + 1, session_id=session)
 

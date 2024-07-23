@@ -12,8 +12,8 @@ from scipy.special import kl_div # (ufuncs in scipy.special are written in C) py
 import transformers
 import torch
 
-from transformer_wrappers.wrappers import InjectCausalLMWrapper # pylint:disable=E0401,E0611
-
+from transformer_wrappers.wrappers import InjectCausalLMWrapper, CausalLMWrapper# pylint:disable=E0401,E0611
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class EmbeddingsType(str, Enum):
     BLOCK_OUTPUT = "block_output"
@@ -318,11 +318,10 @@ class ModelUtils:
     def __init__(self, model_id, device, quant=False, hf_token=None):
         self.id = model_id
         self.is_quantized = quant
-        self.tokenizer, self.model, self.model_config, self.decoder = self._load_model(
+        self.tokenizer, self.model, self.model_config, self.decoder, self.prefix_tokens = self._load_model(
             model_id, device, quant, hf_token
         )
         self.heartbeat_stamp = time.time()
-        self.prefix_tokens = []
 
     def _load_model(self, model_id, device, quant, hf_token):
 
@@ -348,7 +347,7 @@ class ModelUtils:
         # TODO: find a solution for this
         # Compute prefix tokens (9 is a random number)
         prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).squeeze()
-        self.prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
+        prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
 
         MODEL_CONFIG = {
             "trust_remote_code": True,
@@ -367,6 +366,16 @@ class ModelUtils:
             tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
         )
         model.enable_wrapper()
+        # TODO: test wrong last token
+        #model = AutoModelForCausalLM.from_pretrained(
+        #    model_id,
+        #    trust_remote_code=True,
+        #    config=model_config,
+        #    quantization_config=quant_config,
+        #    device_map=device,
+        #    token=hf_token,
+        #    torch_dtype=bfloat16,
+        #)
 
         decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
-        return tokenizer, model, model_config, decoder
+        return tokenizer, model, model_config, decoder, prefix_tokens
