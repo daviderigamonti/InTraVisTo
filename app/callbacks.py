@@ -636,7 +636,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
             # Delete models with expired timestamp while avoid deleting model of current session
             dead = [mid for mid, model in models.items() if cur - model.heartbeat_stamp > HEARTBEAT_TIMEOUT and mid != model_id]
             if dead:
-                for mid in dead: 
+                for mid in dead:
                     del models[mid]
                 gc.collect()
                 # TODO: add check for device

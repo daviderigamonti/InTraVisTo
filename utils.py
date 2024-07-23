@@ -15,8 +15,6 @@ import torch
 from transformer_wrappers.wrappers import InjectCausalLMWrapper # pylint:disable=E0401,E0611
 
 
-DEFAULT_SESSION_ID = "0"
-
 class EmbeddingsType(str, Enum):
     BLOCK_OUTPUT = "block_output"
     BLOCK_INPUT = "block_input"
@@ -39,6 +37,23 @@ class DecodingType(str, Enum):
 class ResidualContribution(str, Enum):
     NORM = "norm"
     KL_DIV = "kl_divergence"
+
+def _res_contrib_norm(residual, x, embs, **kwargs):
+    return (
+        embs[residual].norm(2, dim=-1) / (embs[residual].norm(2, dim=-1) + embs[x].norm(2, dim=-1))
+    ).squeeze().detach().float().cpu()
+
+def _res_contrib_kl_div(residual, x, ref, emb_probs, **kwargs):
+    kldiv_res = kl_div(emb_probs[residual], emb_probs[ref]).sum()
+    kldiv_x = kl_div(emb_probs[x], emb_probs[ref]).sum()
+    return kldiv_x / (kldiv_res + kldiv_x)
+
+DEFAULT_SESSION_ID = "0"
+RESIDUAL_CONTRIBUTION = {
+    ResidualContribution.NORM: _res_contrib_norm,
+    ResidualContribution.KL_DIV: _res_contrib_kl_div
+}
+
 
 class CellWrapper:
     def __init__(self, layer_number=-1, token_number=-1, emb_keys=(), emb_block=torch.Tensor(), probabilities=None):
@@ -162,10 +177,10 @@ class LayerWrapper:
     # TODO: maybe inefficient?
     def get_kldiff(self, other: Self, emb_type: EmbeddingsType):
         return [
-            sum(kl_div(
+            kl_div(
                 torch.nn.functional.softmax(cell1.get_embedding(emb_type), dim=-1).float().detach().cpu(),
                 torch.nn.functional.softmax(cell2.get_embedding(emb_type), dim=-1).float().detach().cpu(),
-            ))
+            ).sum()
             for cell1, cell2 in zip(self, other)
         ]
 
@@ -276,39 +291,27 @@ class Decoder:
 
         res[ProbabilityType.ENTROPY] = entropy
         res[ProbabilityType.ARGMAX] = argmax
+        att_res_percent = torch.tensor(0.0) \
+            if EmbeddingsType.BLOCK_INPUT not in cell.embeddings or EmbeddingsType.POST_ATTENTION not in cell.embeddings \
+            else RESIDUAL_CONTRIBUTION[residual_contribution](
+                residual=EmbeddingsType.BLOCK_INPUT,
+                x=EmbeddingsType.POST_ATTENTION,
+                ref=EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                embs=cell.embeddings,
+                emb_probs=emb_probs
+            )
+        res |= {ProbabilityType.ATT_RES_PERCENT: att_res_percent}
 
-        if EmbeddingsType.BLOCK_INPUT not in cell.embeddings or EmbeddingsType.POST_ATTENTION not in cell.embeddings:
-            res |= {ProbabilityType.ATT_RES_PERCENT: torch.tensor(0.0)}
-        else:
-            if residual_contribution == ResidualContribution.NORM:
-                initial_residual = cell.embeddings[EmbeddingsType.BLOCK_INPUT]
-                x_emb = cell.embeddings[EmbeddingsType.POST_ATTENTION]
-                res_percent = (
-                    initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
-                ).squeeze().detach().float().cpu()
-            # TODO: slow
-            elif residual_contribution == ResidualContribution.KL_DIV:
-                kldiv_res = sum(kl_div(emb_probs[EmbeddingsType.BLOCK_INPUT], emb_probs[EmbeddingsType.POST_ATTENTION_RESIDUAL]))
-                kldiv_att = sum(kl_div(emb_probs[EmbeddingsType.POST_ATTENTION], emb_probs[EmbeddingsType.POST_ATTENTION_RESIDUAL]))
-                res_percent = kldiv_att / (kldiv_res + kldiv_att)
-            res |= {ProbabilityType.ATT_RES_PERCENT: res_percent}
-
-        if EmbeddingsType.POST_ATTENTION_RESIDUAL not in cell.embeddings or EmbeddingsType.POST_FF not in cell.embeddings:
-            res |= {ProbabilityType.FFNN_RES_PERCENT: torch.tensor(0.0)}
-        else:
-            if residual_contribution == ResidualContribution.NORM:
-                initial_residual = cell.embeddings[EmbeddingsType.POST_ATTENTION_RESIDUAL]
-                x_emb = cell.embeddings[EmbeddingsType.POST_FF]
-                res_percent = (
-                    initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
-                ).squeeze().detach().float().cpu()
-            # TODO: slow
-            elif residual_contribution == ResidualContribution.KL_DIV:
-                kldiv_res = sum(kl_div(emb_probs[EmbeddingsType.POST_ATTENTION_RESIDUAL], emb_probs[EmbeddingsType.BLOCK_OUTPUT]))
-                kldiv_ffn = sum(kl_div(emb_probs[EmbeddingsType.POST_FF], emb_probs[EmbeddingsType.BLOCK_OUTPUT]))
-                res_percent = kldiv_ffn / (kldiv_res + kldiv_ffn)
-            res |= {ProbabilityType.FFNN_RES_PERCENT: res_percent}
-
+        ffnn_res_percent = torch.tensor(0.0) \
+            if EmbeddingsType.POST_ATTENTION_RESIDUAL not in cell.embeddings or EmbeddingsType.POST_FF not in cell.embeddings \
+            else RESIDUAL_CONTRIBUTION[residual_contribution](
+                residual=EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                x=EmbeddingsType.POST_FF,
+                ref=EmbeddingsType.BLOCK_OUTPUT,
+                embs=cell.embeddings,
+                emb_probs=emb_probs
+            )
+        res |= {ProbabilityType.FFNN_RES_PERCENT: ffnn_res_percent}
         return res
 
 class ModelUtils:
@@ -319,8 +322,13 @@ class ModelUtils:
             model_id, device, quant, hf_token
         )
         self.heartbeat_stamp = time.time()
+        self.prefix_tokens = []
 
     def _load_model(self, model_id, device, quant, hf_token):
+
+        if not model_id:
+            return None, None, None, None
+
         quant_config = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -340,7 +348,7 @@ class ModelUtils:
         # TODO: find a solution for this
         # Compute prefix tokens (9 is a random number)
         prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).squeeze()
-        prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
+        self.prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
 
         MODEL_CONFIG = {
             "trust_remote_code": True,

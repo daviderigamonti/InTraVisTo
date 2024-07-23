@@ -27,6 +27,7 @@ RES_TYPE_MAP = [
 ]
 
 MODEL_MAP = [
+    {"label": "-", "value": ""},
     {"label": "Llama 2 ", "value": "meta-llama/Llama-2-7b-hf"},
     {"label": "Mistral Instruct", "value": "mistralai/Mistral-7B-Instruct-v0.2"},
 ]
