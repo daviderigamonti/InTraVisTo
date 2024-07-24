@@ -28,7 +28,7 @@ def generate_layout(model_config):
                     dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element"),
                     spinner_class_name="spinner-graph", color="primary"
                 )
-            ], id="tooltip-target"),
+            ], className="scrollable-div", id="tooltip-target"),
             html.Hr(),
             dbc.Spinner(
                 dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element"), 
@@ -40,7 +40,8 @@ def generate_layout(model_config):
             ),
             *_stores(),
             dcc.Interval(id="model_heartbeat", interval=HEARTBEAT_INTERVAL * 1000),
-        ], className="container-fluid pt-2")
+        ], className="container-fluid pt-2"),
+        html.Div([], id="overlay", className="overlay")
     ])
 
 def _navbar():

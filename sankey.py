@@ -78,12 +78,12 @@ def cumulative_sankey_traces(
         attn_w = 1 - res_w
         resattn_w = linkinfo["ffnn_res_percent"][row-1][index].item()
         resattn_w += 0.0000000001 if resattn_w == 0.0 else (-0.0000000001 if resattn_w == 1.0 else 0)  # Prevent 0
-        mlp_w = 1 - resattn_w
-        # Create MLP / Attention / Intermediate nodes
-        mlp_index = len(new_elmap.keys())
+        ff_w = 1 - resattn_w
+        # Create FFNN / Attention / Intermediate nodes
+        ff_index = len(new_elmap.keys())
         new_labels.append(dfs["ffnn"][row][index])
         new_elmap[(round(row - 1 + 0.8, 2), round(index - 0.5, 2))] = {
-            "id": mlp_index, "base": base * mlp_w, "type": "FFNN"}
+            "id": ff_index, "base": base * ff_w, "type": "FFNN"}
         attn_index = len(new_elmap.keys())
         new_labels.append(dfs["attention"][row][index])
         new_elmap[(round(row - 1 + 0.45, 2), round(index - 0.5, 2))] = {
@@ -109,15 +109,15 @@ def cumulative_sankey_traces(
                     new_elmap[(row-1, i)] = {"id": new_index, "base": v, "type": "Node"}
                 val.append(v)
                 types.append("att_in")
-        # MLP State
+        # FFNN State
         over.append(el_index)
-        under.append(mlp_index)
-        val.append(base * mlp_w)
-        types.append("mlp_out")
-        over.append(mlp_index)
+        under.append(ff_index)
+        val.append(base * ff_w)
+        types.append("ff_out")
+        over.append(ff_index)
         under.append(hid_index)
-        val.append(base * mlp_w)
-        types.append("mlp_in")
+        val.append(base * ff_w)
+        types.append("ff_in")
         # Attention State
         over.append(hid_index)
         under.append(attn_index)
@@ -127,12 +127,12 @@ def cumulative_sankey_traces(
         over.append(hid_index)
         under.append(new_elmap[(row-1, index)]["id"])
         val.append(base * res_w)
-        types.append("residual")
+        types.append("residual_att")
         new_elmap[(row-1, index)]["base"] += base * res_w
         over.append(el_index)
         under.append(hid_index)
         val.append(base * resattn_w)
-        types.append("residual")
+        types.append("residual_ff")
 
     # If depth limit is reached, stop recurring
     if row - 1 > rowlimit:
@@ -204,8 +204,6 @@ def generate_sankey(dfs, linkinfo, sankey_parameters: SankeyParameters):
     return (under, over, values, types, labels, elmap)
 
 # Rescales values of a list inside a given range, if invert is set to True, the range is flipped
-
-
 def rescale_list(l, range_min=0, range_max=1, old_min=None, old_max=None, invert=False):
     if old_max is None:
         old_max = max([i for i in l if i is not None])
@@ -302,24 +300,34 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     # Add kl divergence values to residual links between consecutive layers
     # TODO: clamping infinite values to max value
     #max_kl = linkinfo["kl_diff"].replace([np.inf, -np.inf], np.nan).max(skipna=True).max()
-    linkinfo["kl_diff"] = torch.stack(linkinfo["kl_diff"], dim=0)
-    max_kl = torch.max(linkinfo["kl_diff"][torch.isfinite(linkinfo["kl_diff"])])
-    def checkinf(x): return x if not np.isinf(x) else max_kl
+    # linkinfo["kl_diff"] = torch.stack(linkinfo["kl_diff"], dim=0)
+    # max_kl = torch.max(linkinfo["kl_diff"][torch.isfinite(linkinfo["kl_diff"])])
+    # def checkinf(x): return x if not np.isinf(x) else max_kl
+    # kl_values = [
+    #     checkinf(
+    #         linkinfo["kl_diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
+    #     ).item() if typ in ["residual", "ff_in"] else None
+    #     for typ, el in zip(types, un)
+    # ]
+    kl_map = {
+        "residual_att": "kl_diff_in-int", "residual_ff": "kl_diff_int-out",
+        "att_out": "kl_diff_att-int",
+        "ff_in": "kl_diff_int-ff", "ff_out": "kl_diff_ff-out"
+    }
     kl_values = [
-        checkinf(
-            linkinfo["kl_diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
-        ).item() if typ in ["residual", "mlp_in"] else None
+        linkinfo[kl_map[typ]][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
+        if typ not in ["att_in"] else None
         for typ, el in zip(types, un)
     ]
-    def format_kl(x): return "KL: {:.0f}m nats".format(x) if x >= 10 else "KL: {:.0f}μ nats".format(x * 1000)
+    def format_kl(x): return "KL: {:.0f}m nats".format(x * 1000) if x >= 10 else "KL: {:.0f}μ nats".format(x * 1000 * 1000)
     links_extra = [
-        l | {"kl_diff": format_kl(kl * 1000) if kl is not None else ""}
+        l | {"kl_diff": format_kl(kl) if kl is not None else ""}
         for l, kl in zip(links_extra, kl_values)
     ]
 
     diff_labels = [
         linkinfo["diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
-        if typ in ["residual"] and math.ceil(revmap_y[el]) > 0 else None
+        if typ in ["residual_att", "residual_ff"] and math.ceil(revmap_y[el]) > 0 else None
         for typ, el in zip(types, un)
     ]
     links_extra = [
@@ -354,12 +362,20 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
 
     # Link colors
     link_colors = []
-    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(kl_values, invert=True)):
+    np_kl_values = np.array(kl_values)
+    kl_mask = np_kl_values == None
+    sort_kl_values = np.argsort(np_kl_values[~kl_mask]).tolist()
+    i = -1
+    std_kl_values = [
+        sort_kl_values.index(i) if not m else None
+        for m in kl_mask
+        if m or (i := i + 1) or True
+    ]
+    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.2, range_max=1.2)):
         color = sankey_parameters.non_residual_link_color.copy()
         # Color residuals according todifference of kl divergence
         if kl is not None:
             # TODO hardcoded color
-            # TODO kl values for color visualization are a bit off due to their range
             color = change_color_brightness((255, 99, 71), kl)
         elif typ in ["att_in"]:
             # Color attention following max attention values

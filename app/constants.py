@@ -27,10 +27,16 @@ RES_TYPE_MAP = [
 ]
 
 MODEL_MAP = [
-    {"label": "-", "value": ""},
     {"label": "Llama 2 ", "value": "meta-llama/Llama-2-7b-hf"},
     {"label": "Mistral Instruct", "value": "mistralai/Mistral-7B-Instruct-v0.2"},
 ]
+
+TABLE_Z_FORMAT = {
+    ProbabilityType.ARGMAX: "<i>Probability</i>: %{z:1.3%}",
+    ProbabilityType.ENTROPY: "<i>Entropy</i>: %{z:.3f} nats",
+    ProbabilityType.ATT_RES_PERCENT: "<i>Contribution</i>: %{z:1.2%}",
+    ProbabilityType.FFNN_RES_PERCENT: "<i>Contribution</i>: %{z:1.2%}",
+}
 
 HEARTBEAT_INTERVAL = 10 # Seconds
 HEARTBEAT_TIMEOUT = 20 # Seconds

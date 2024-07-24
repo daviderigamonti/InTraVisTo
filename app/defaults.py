@@ -11,7 +11,7 @@ DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
 DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
-DEFAULT_INITIAL_CALLS = ["update_output", "call_model_generate"]
+DEFAULT_INITIAL_CALLS = ["update_model", "call_model_generate"]
 
 DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},

@@ -207,19 +207,34 @@ def generate_callbacks(app, cache, models, models_lock, device):
         attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
 
-        # attentions = compute_batch_complete_padded_attentions(generated_output, range(0, model_config.num_attention_heads))[-1]
         attentions = generated_output["attentions"]
-
-        kl_diffs = [
-            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.BLOCK_OUTPUT), dim=0)
+        kl_diffs_ii = [
+            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT), dim=0)
             for i in range(1, len(layers))
         ]
-
+        kl_diffs_ai = [
+            torch.stack(layer.get_kldiff(layer, EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION), dim=0)
+            for layer in layers[1:]
+        ]
+        kl_diffs_io = [
+            torch.stack(layer.get_kldiff(layer, EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL), dim=0)
+            for layer in layers[1:]
+        ]
+        kl_diffs_if = [
+            torch.stack(layer.get_kldiff(layer, EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL), dim=0)
+            for layer in layers[1:]
+        ]
+        kl_diffs_fo = [
+            torch.stack(layer.get_kldiff(layer, EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF), dim=0)
+            for layer in layers[1:]
+        ]
         # TODO: choose how to pass values (as torch tensors or python lists)
         #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
         linkinfo = {
             "attentions": attentions, "attn_res_percent": attn_res_percent,
-            "ffnn_res_percent": ffnn_res_percent, "kl_diff": kl_diffs, "diff": token_diffs
+            "ffnn_res_percent": ffnn_res_percent, "diff": token_diffs,
+            "kl_diff_in-int": kl_diffs_ii, "kl_diff_att-int": kl_diffs_ai,
+            "kl_diff_int-out": kl_diffs_io, "kl_diff_int-ff": kl_diffs_if, "kl_diff_ff-out": kl_diffs_fo,
         }
 
         return dfs, linkinfo, input_len, output_len
@@ -452,11 +467,11 @@ def generate_callbacks(app, cache, models, models_lock, device):
                 ygap=2,
                 x=[i - 0.5 for i in range(0, input_len + output_len)],
                 y=list(range(0, model.model_config.num_hidden_layers + 1)),
-                hovertemplate='<i>Probability</i>: %{z:.2f}%' +
-                '<br><b>Layer</b>: %{y}' +
-                '<br><b>Token position</b>: %{x}' +
-                '<br><b>Secondary representations</b>: %{text}' +
-                '<extra></extra>',
+                hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
+                "<br><b>Layer</b>: %{y}" +
+                "<br><b>Token position</b>: %{x}" +
+                "<br><b>Secondary representations</b>: %{text}" +
+                "<extra></extra>",
                 texttemplate="%{text[0]}",
                 textfont={"size": tab_vis_config["font_size"]},
                 colorscale="blues"
@@ -465,6 +480,7 @@ def generate_callbacks(app, cache, models, models_lock, device):
         fig.update_layout(
             margin=dict(l=5, r=5, t=5, b=5),
             height=1000,
+            width=(input_len + output_len) * 85,
             yaxis=dict(
                 title_text="Transformer Layers",
                 tickmode="linear",
@@ -475,7 +491,8 @@ def generate_callbacks(app, cache, models, models_lock, device):
                 tickmode="linear",
                 titlefont=dict(size=20),
             ),
-            template="plotly")
+            template="plotly"
+        )
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=8, line_color='white')
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=2, line_color='darkblue')
         fig.add_hline(y=0.5, line_width=8, line_color='white')
@@ -548,9 +565,10 @@ def generate_callbacks(app, cache, models, models_lock, device):
             Input("initial_callbacks", "data"),
             Input("model_select", "value"),
         ],
+        running=[(Output("overlay", "class"), "overlay show", "overlay")],
         prevent_initial_call=True,
     )
-    def update_output(initial_callbacks, model_id):
+    def update_model(initial_callbacks, model_id):
         nonlocal models
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
         with models_lock:
@@ -640,6 +658,9 @@ def generate_callbacks(app, cache, models, models_lock, device):
     )
     def update_active_models(_, model_id):
         with models_lock:
+            # Old sessions might be present and still send heartbeat signals
+            if model_id not in models:
+                return
             # Check for models with dead sessions and remove them
             cur = time.time()
             # TODO: Consider if it's necessary to separate the check-dead callback from the heartbeat callback

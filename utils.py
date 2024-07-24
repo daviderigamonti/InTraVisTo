@@ -4,7 +4,7 @@ from typing import List, Self
 import time
 import re
 
-from torch.distributions import Categorical
+from torch.cuda import OutOfMemoryError
 from torch import bfloat16
 from transformers import AutoTokenizer
 from scipy.special import kl_div # (ufuncs in scipy.special are written in C) pylint:disable=E0611
@@ -80,7 +80,7 @@ class CellWrapper:
         return self.probabilities[decoding_strategy]
 
     def get_logits_info(self, emb_type: EmbeddingsType, decoding_matrix):
-        logits = torch.matmul(self.embeddings[emb_type], decoding_matrix.T)
+        logits = torch.matmul(self.embeddings[emb_type], decoding_matrix.T).float()
         probs = torch.nn.functional.softmax(logits, dim=-1)
         token_id = logits.argmax()
         return logits, probs, token_id
@@ -91,21 +91,6 @@ class CellWrapper:
         for k in self.embeddings.keys() & other.embeddings.keys():
             l.add_embedding(self.embeddings[k] - other.embeddings[k], k)
         return l
-
-    def compute_prob_residual(self, emb_res: EmbeddingsType, emb: EmbeddingsType, return_0_on_error: bool = False, **kwargs):
-        if emb not in self.embeddings or emb_res not in self.embeddings:
-            if return_0_on_error:
-                return 0.0
-            raise KeyError(f"Missing embeddings {emb, emb_res} to compute cell probability")
-        initial_residual = self.embeddings[emb_res]
-        x_emb = self.embeddings[emb]
-        return (
-            initial_residual.norm(2, dim=-1) / (initial_residual.norm(2, dim=-1) + x_emb.norm(2, dim=-1))
-        ).squeeze().detach().float().cpu()
-
-    def compute_prob_entropy(self, emb_type, decoding_matrix, return_0_on_error: bool = False, **kwargs):
-        return Categorical(probs=self.get_logits_info(emb_type, decoding_matrix)[1]).entropy()
-
 
 class LayerWrapper:
     def __init__(
@@ -175,12 +160,15 @@ class LayerWrapper:
         return l
     
     # TODO: maybe inefficient?
-    def get_kldiff(self, other: Self, emb_type: EmbeddingsType):
+    def get_kldiff(self, other: Self, emb_type: EmbeddingsType, other_emb_type: EmbeddingsType = None):
+        other_emb_type = emb_type if other_emb_type is None else other_emb_type
         return [
             kl_div(
-                torch.nn.functional.softmax(cell1.get_embedding(emb_type), dim=-1).float().detach().cpu(),
-                torch.nn.functional.softmax(cell2.get_embedding(emb_type), dim=-1).float().detach().cpu(),
-            ).sum()
+                torch.nn.functional.softmax(cell1.get_embedding(emb_type).float().detach().cpu(), dim=-1),
+                torch.nn.functional.softmax(cell2.get_embedding(other_emb_type).float().detach().cpu(), dim=-1),
+            ).sum() / (
+                (cell1.get_embedding(emb_type).norm() + cell2.get_embedding(other_emb_type).norm()) / 2
+            ).float().detach().cpu()
             for cell1, cell2 in zip(self, other)
         ]
 
@@ -286,7 +274,7 @@ class Decoder:
         for k in cell.embeddings.keys():
             _, probs, pred_id = cell.get_logits_info(k, decoding_matrix)
             emb_probs[k] = probs.float().detach().cpu()
-            entropy[k] = Categorical(probs=probs, validate_args=False).entropy().detach().float().cpu()
+            entropy[k] = -torch.sum(probs * torch.log(probs)).detach().float().cpu()
             argmax[k] = probs[pred_id].detach().float().cpu()
 
         res[ProbabilityType.ENTROPY] = entropy
@@ -323,11 +311,7 @@ class ModelUtils:
         )
         self.heartbeat_stamp = time.time()
 
-    def _load_model(self, model_id, device, quant, hf_token):
-
-        if not model_id:
-            return None, None, None, None
-
+    def _load_model(self, model_id, device, quant, hf_token, tries=3, try_timeout=5):
         quant_config = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -360,22 +344,33 @@ class ModelUtils:
             "token": hf_token,
         }
 
-        model = InjectCausalLMWrapper.from_pretrained(
-            model_id, model_kwargs=MODEL_CONFIG,
-            quantization_configs=quant_config,
-            tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
-        )
-        model.enable_wrapper()
-        # TODO: test wrong last token
-        #model = AutoModelForCausalLM.from_pretrained(
-        #    model_id,
-        #    trust_remote_code=True,
-        #    config=model_config,
-        #    quantization_config=quant_config,
-        #    device_map=device,
-        #    token=hf_token,
-        #    torch_dtype=bfloat16,
-        #)
+        model = None
+        while True:
+            try:
+                model = InjectCausalLMWrapper.from_pretrained(
+                    model_id, model_kwargs=MODEL_CONFIG,
+                    quantization_configs=quant_config,
+                    tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
+                )
+                model.enable_wrapper()
+                # TODO: test wrong last token
+                #model = AutoModelForCausalLM.from_pretrained(
+                #    model_id,
+                #    trust_remote_code=True,
+                #    config=model_config,
+                #    quantization_config=quant_config,
+                #    device_map=device,
+                #    token=hf_token,
+                #    torch_dtype=bfloat16,
+                #)
+                break
+            except OutOfMemoryError:
+                tries -= 1
+                if tries <= 0:
+                    print(f"Could not load {model_id}")
+                    return None, None, None, None, None
+                print(f"Out of Memory while loading {model_id}, {tries} attempt(s) left, next attempt in {try_timeout} seconds")
+                time.sleep(try_timeout)
 
         decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
         return tokenizer, model, model_config, decoder, prefix_tokens
