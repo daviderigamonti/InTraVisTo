@@ -37,6 +37,7 @@ device = f"cuda:{cuda.current_device()}" if cuda.is_available() else "cpu"
 models = {model_id: ModelUtils(model_id, device, quant=True, hf_token=hf_auth)}
 
 models_lock = threading.Lock()
+model_loading_lock = threading.Lock()
 
 model_config = models[model_id].model_config
 
@@ -55,7 +56,7 @@ app = Dash(
 # TODO: fix value passed to generate functions
 app.layout = generate_layout(model_config)
 
-generate_callbacks(app, cache, models, models_lock, device)
+generate_callbacks(app, cache, models, models_lock, model_loading_lock, device)
 
 if __name__ == '__main__':
 

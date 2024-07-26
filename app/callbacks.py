@@ -25,7 +25,7 @@ from app.defaults import * # pylint:disable=W0401,W0614
 from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
 
-def generate_callbacks(app, cache, models, models_lock, device):
+def generate_callbacks(app, cache, models, models_lock, model_loading_lock, device):
 
     def extract_key_from_processed_layers(decoded_layers: List[List[object]], key: Any):
         return [[
@@ -557,13 +557,22 @@ def generate_callbacks(app, cache, models, models_lock, device):
         return fig
 
     @app.callback(
+        Output("model_id", "data"),
+        Input("model_select", "value"),
+        prevent_initial_call=True,
+    )
+    def update_model_id(model_id_select):
+        return model_id_select
+
+    @app.callback(
         [
             Output("initial_callbacks", "data", allow_duplicate=True),
-            Output("model_id", "data"),
+            Output("model_id", "value"),
+            Output("model_select_alert", "is_open"),
         ],
         [
             Input("initial_callbacks", "data"),
-            Input("model_select", "value"),
+            Input("model_id", "data"),
         ],
         running=[(Output("overlay", "class"), "overlay show", "overlay")],
         prevent_initial_call=True,
@@ -571,10 +580,19 @@ def generate_callbacks(app, cache, models, models_lock, device):
     def update_model(initial_callbacks, model_id):
         nonlocal models
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
-        with models_lock:
+        
+        if not model_id:
+            return initial_callbacks, no_update, False
+        
+        # A dedicated lock is used since we are interested in model loading being exclusive only with othere instances of itself
+        with model_loading_lock:
             if model_id not in models:
-                models |= {model_id: ModelUtils(model_id, device, quant=True, hf_token=os.environ["HF_TOKEN"])}
-        return initial_callbacks, model_id
+                model = ModelUtils(model_id, device, quant=True, hf_token=os.environ["HF_TOKEN"])
+                if model.model is None:
+                    return initial_callbacks, "", True
+                models |= {model_id: model}
+                
+        return initial_callbacks, model_id, False
 
     @app.callback(
         [
@@ -658,9 +676,6 @@ def generate_callbacks(app, cache, models, models_lock, device):
     )
     def update_active_models(_, model_id):
         with models_lock:
-            # Old sessions might be present and still send heartbeat signals
-            if model_id not in models:
-                return
             # Check for models with dead sessions and remove them
             cur = time.time()
             # TODO: Consider if it's necessary to separate the check-dead callback from the heartbeat callback
@@ -672,6 +687,8 @@ def generate_callbacks(app, cache, models, models_lock, device):
                 gc.collect()
                 # TODO: add check for device
                 torch.cuda.empty_cache()
-            # Revive current model
-            cur = time.time()
-            models[model_id].heartbeat_stamp = cur
+            # Old sessions might be present and still send heartbeat signals
+            if model_id in models:
+                # Revive current model
+                cur = time.time()
+                models[model_id].heartbeat_stamp = cur

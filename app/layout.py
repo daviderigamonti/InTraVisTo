@@ -136,12 +136,19 @@ def _settings(model_config):
                 dbc.Row([
                     dbc.Col(["Model:"], className="col-md-auto"),
                     dbc.Col([
-                        dbc.Select(
-                            id="model_select",
-                            options=MODEL_MAP,
-                            value=DEFAULT_MODEL,
-                            className="form-select borderpx-1 w-100"
-                        )
+                        dbc.Row([
+                            dbc.Select(
+                                id="model_select",
+                                options=MODEL_MAP,
+                                value=DEFAULT_MODEL,
+                                className="form-select borderpx-1 w-100"
+                            ),
+                            dbc.Alert(
+                                ["Error while loading model"],
+                                id="model_select_alert", 
+                                color="danger", dismissable=True, fade=True, is_open=False,
+                            ),
+                        ], className="gy-2")
                     ], className="me-5"),
                 ], className="d-flex align-items-center"),
                 dbc.Row([

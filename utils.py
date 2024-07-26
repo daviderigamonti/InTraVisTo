@@ -3,6 +3,7 @@ from typing import List, Self
 
 import time
 import re
+import gc
 
 from torch.cuda import OutOfMemoryError
 from torch import bfloat16
@@ -311,7 +312,7 @@ class ModelUtils:
         )
         self.heartbeat_stamp = time.time()
 
-    def _load_model(self, model_id, device, quant, hf_token, tries=3, try_timeout=5):
+    def _load_model(self, model_id, device, quant, hf_token, tries=4, try_timeout=5):
         quant_config = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -353,23 +354,21 @@ class ModelUtils:
                     tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
                 )
                 model.enable_wrapper()
-                # TODO: test wrong last token
-                #model = AutoModelForCausalLM.from_pretrained(
-                #    model_id,
-                #    trust_remote_code=True,
-                #    config=model_config,
-                #    quantization_config=quant_config,
-                #    device_map=device,
-                #    token=hf_token,
-                #    torch_dtype=bfloat16,
-                #)
                 break
             except OutOfMemoryError:
+
+                del model
+                model = None
+                gc.collect()
+                # TODO: add check for device
+                torch.cuda.empty_cache()
+
                 tries -= 1
                 if tries <= 0:
                     print(f"Could not load {model_id}")
                     return None, None, None, None, None
                 print(f"Out of Memory while loading {model_id}, {tries} attempt(s) left, next attempt in {try_timeout} seconds")
+                
                 time.sleep(try_timeout)
 
         decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
