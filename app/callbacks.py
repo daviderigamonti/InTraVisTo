@@ -497,14 +497,25 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=2, line_color='darkblue')
         fig.add_hline(y=0.5, line_width=8, line_color='white')
         fig.add_hline(y=0.5, line_width=2, line_color='darkblue')
+
+        offset = 0 if tab_vis_config["hide_col"] else 1
+        # Injects reminders
+        for inj in run_config["injects"]:
+            if inj["location"] == tab_vis_config["emb_type"]:
+                fig.add_shape(
+                    x0=inj["target_token"] + offset - 0.5, x1=inj["target_token"] + offset - 1.5,
+                    y0=inj["target_layer"] - 0.5 + 1, y1=inj["target_layer"] + 0.5 + 1,
+                    line_width=2, line_color="green"
+                )
+        # Cell selector
         if vis_config["x"] is not None and vis_config["y"] is not None:
-            offset = 0 if tab_vis_config["hide_col"] else 1
+            
             fig.add_shape(
                 x0=vis_config["x"] + offset - 0.5, x1=vis_config["x"] + offset - 1.5,
                 y0=vis_config["y"] - 0.5, y1=vis_config["y"] + 0.5,
                 line_width=2, line_color="red"
             )
-        # fig.add_hline(y=32, line_width=30, line_color='white')
+
         return fig, model.tokenizer.decode(generated_output["sequences"].squeeze()[input_len:])
 
     @app.callback(
@@ -647,14 +658,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         Output("inject_container", "children"),
         [
             Input("run_config", "data"),
+            Input("table_vis_config", "data"),
         ],
         [
             State("inject_container", "children"),
         ],
         prevent_initial_call=True,
     )
-    def manage_inject_cards(run_config, inject_container):
-        if len(run_config["injects"]) == len(inject_container):
+    def manage_inject_cards(run_config, tab_vis_config, inject_container):
+        if len(run_config["injects"]) == len(inject_container) and ctx.triggered_id != "table_vis_config":
             raise PreventUpdate
 
         # TODO: better to re-create each card every time or look for removed/new cards and remove/add them?
@@ -663,8 +675,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
                 card_id=inj["id"],
                 text=inj["text"],
                 position=inj["location"],
-                token=inj["target_token"],
-                layer=inj["target_layer"]
+                token=inj["target_token"] - (1 if tab_vis_config["hide_col"] else 0),
+                layer=inj["target_layer"] + 1
             )
             for inj in run_config["injects"]
         ]
