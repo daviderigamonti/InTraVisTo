@@ -51,6 +51,7 @@ app = Dash(
     assets_folder=ASSETS_PATH,
     title=TITLE,
     update_title=TITLE + "‎", # Avoid "Updating..." title while processing callbacks, invisible character is needed to avoid having equal title and update_title, leading to "undefined" title
+    routes_pathname_prefix="/intravisto/"
 )
 
 # TODO: fix value passed to generate functions
