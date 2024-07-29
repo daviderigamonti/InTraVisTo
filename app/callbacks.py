@@ -260,11 +260,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     # TODO: take a look at matching callbacks ids
     @app.callback(
         [
-            Output('run_config', 'data'),
+            Output("run_config", "data", allow_duplicate=True),
             Output("injection_card_id", "data"),
         ],
         [
-            Input('max_new_tokens', 'value'),
+            Input("max_new_tokens", "value"),
             Input({"type": "add_inj_button", "index": ALL}, "n_clicks"),
             Input({"type": "inject_close_button", "index": ALL}, "n_clicks"),
         ],
@@ -306,16 +306,18 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         return run_config, card_id
 
     @app.callback(
-        Output('vis_config', 'data'),
+        [
+            Output("vis_config", "data"),
+        ],
         [
             Input("generation_notify", "data"),
-            Input("main_graph", "clickData"),
+            Input("click_data_store", "data"),
             Input("choose_decoding", "value"),
             Input("choose_res_type", "value"),
         ],
         [
-            State('hide_col', 'value'),
-            State('vis_config', 'data'),
+            State("hide_col", "value"),
+            State("vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
@@ -328,7 +330,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         vis_config |= {"res_contrib": res_contrib}
         if ctx.triggered_id == "generation_notify":
             vis_config |= {"x": None, "y": None}
-        return vis_config
+        return vis_config, 
 
 
     @app.callback(
@@ -645,19 +647,23 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Output("graph_tooltip", "is_open", allow_duplicate=True),
             Output("tooltip_target", "style"),
             Output("graph_tooltip", "children", allow_duplicate=True),
+            Output("click_data_store", "data"),
+            Output("main_graph", "clickData")
         ],
         [
             Input("generation_notify", "data"),
-            Input("main_graph", "clickData"),
+            Input("main_graph", "clickData"), # Click data handler (only one, others are updated through click_data_store)
         ],
         [
             State("table_scroll", "data"),
         ],
         prevent_initial_call=True,
     )
-    def display_embedding_tooltip(gen_notify, click_data, table_scroll):
+    def display_embedding_tooltip(_, click_data, table_scroll):
         if click_data is None or ctx.triggered_id == "generation_notify" or click_data["points"][0]["y"] <= 0:
-            return False, no_update, []
+            if click_data is None:
+                return False, no_update, [], no_update, None
+            return False, no_update, [], click_data.copy() | {"notify": str(uuid.uuid4())}, None
 
         children = [extra_layout.generate_tooltip_children_layout(
             layer=click_data["points"][0]["y"],
@@ -671,7 +677,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "transform": f"translate({x_tooltip}px, {y_tooltip}px)"
         }
 
-        return True, tooltip_style, children
+        return True, tooltip_style, children, click_data.copy() | {"notify": str(uuid.uuid4())}, None
 
     @app.callback(
             Output("inject_container", "children", allow_duplicate=True),
@@ -752,17 +758,20 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     @app.callback(
         [
             Output("row_limit", "max"),
+            Output("run_config", "data", allow_duplicate=True),
         ],
         Input("new_model_notify", "data"),
         [
             State("model_id", "data"),
+            State("run_config", "data"),
         ],
         prevent_initial_call=True,
     )
-    def update_components_new_model(_, model_id):
+    def update_components_new_model(_, model_id, run_config):
         with models_lock:
             model = models[model_id]
-        return model.model_config.num_hidden_layers, 
+        run_config |= {"injects": []} 
+        return model.model_config.num_hidden_layers, run_config
 
 
     # Client-side callbacks

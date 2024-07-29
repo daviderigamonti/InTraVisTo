@@ -236,6 +236,7 @@ def _stores():
         dcc.Store(id="table_scroll", data=0),
         dcc.Store(id="run_config", data=DEFAULT_RUN_CONFIG),
         dcc.Store(id="current_run_config"),
+        dcc.Store(id="click_data_store", data={}),
         dcc.Store(id="vis_config", data=DEFAULT_VIS_CONFIG),
         dcc.Store(id="sankey_vis_config", data=DEFAULT_SANKEY_VIS_CONFIG),
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),

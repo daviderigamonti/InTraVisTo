@@ -248,8 +248,11 @@ class Decoder:
                 norms.append(norm)
                 # subtract the inverse to the current hidden state
                 emb = emb - real_embed
+            # TODO: move cleanup somewhere else
             secondary_tokens = [
-                repr(chr(int(s[3:-1], 16)))[1:-1] if re.match(r'<0x\w\w>', s) else repr(s)[1:-1]
+                repr( chr(int(s[3:-1], 16)) if re.match(r"<0x\w\w>", s) else s )[1:-1]
+                    .replace("\u0120", "_") # Replace Ġ
+                    .replace("\u010a", "\\n") # Replace Ċ
                 for s in secondary_tokens
             ]
             decoded_cell[k] = secondary_tokens
