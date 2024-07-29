@@ -1,5 +1,6 @@
-from enum import Enum
+from dataclasses import dataclass, field
 from typing import List, Self
+from enum import Enum
 
 import time
 import re
@@ -13,8 +14,7 @@ from scipy.special import kl_div # (ufuncs in scipy.special are written in C) py
 import transformers
 import torch
 
-from transformer_wrappers.wrappers import InjectCausalLMWrapper, CausalLMWrapper# pylint:disable=E0401,E0611
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformer_wrappers.wrappers import InjectCausalLMWrapper# pylint:disable=E0401,E0611
 
 class EmbeddingsType(str, Enum):
     BLOCK_OUTPUT = "block_output"
@@ -303,16 +303,22 @@ class Decoder:
         res |= {ProbabilityType.FFNN_RES_PERCENT: ffnn_res_percent}
         return res
 
+@dataclass(eq=True, frozen=True)
+class ModelInfo:
+    id: str = field(default="", compare=True)
+    device: str = field(default="cpu", compare=True)
+    quantized: bool = field(default=False, compare=True)
+
 class ModelUtils:
-    def __init__(self, model_id, device, quant=False, hf_token=None):
-        self.id = model_id
-        self.is_quantized = quant
+    def __init__(self, info,  hf_token=None):
+        self.info = info
         self.tokenizer, self.model, self.model_config, self.decoder, self.prefix_tokens = self._load_model(
-            model_id, device, quant, hf_token
+            info.id, info.device, info.quantized, hf_token
         )
         self.heartbeat_stamp = time.time()
 
     def _load_model(self, model_id, device, quant, hf_token, tries=4, try_timeout=5):
+        
         quant_config = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",

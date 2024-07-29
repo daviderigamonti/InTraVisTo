@@ -25,7 +25,7 @@ from app.defaults import * # pylint:disable=W0401,W0614
 from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
 
-def generate_callbacks(app, cache, models, models_lock, model_loading_lock, device):
+def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
     def extract_key_from_processed_layers(decoded_layers: List[List[object]], key: Any):
         return [[
@@ -57,11 +57,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
     def model_generate(prompt, model_id, run_config, session):
         with models_lock:
             model = models[model_id]
-        inputs = model.tokenizer(prompt, return_tensors="pt").to(device)
-        # Generate
-        # output = model(inputs.input_ids, return_dict=True, output_hidden_states=True, output_attentions=True)
-        # print(f"Input len: {inputs.input_ids.shape}")
-        # print(inputs.char_to_token)
+        inputs = model.tokenizer(prompt, return_tensors="pt").to(model.info.device)
+
         input_len = len(inputs.input_ids.squeeze().tolist())
 
         injects = []
@@ -70,7 +67,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
                 inject["text"],
                 add_special_tokens=False,
                 return_tensors="pt"
-            ).to(device).squeeze()
+            ).to(model.info.device).squeeze()
 
             # Remove eventual prefix tokens
             mask = ~torch.isin(inj_token, model.prefix_tokens)
@@ -131,6 +128,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])
         feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])
         intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
+
+        # TODO: attaching normalized output states to hidden states tensor in place of the last layer states
+        hidden_states[-1, :, :] = generation_result["output_hidden_state"][0, :, :].detach()
 
         # 1- Prepare matrix of input tokens hidden_state:  N_TOKENS x N_LAYER
         # input_hidden_states = generation_result["hidden_states"][0]
@@ -397,11 +397,16 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         ],
         prevent_initial_call=True,
     )
-    def call_model_generate(initial_callbacks, button, text, model_id, run_config, vis_config):
+    def call_model_generate(initial_callbacks, _, text, model_id, run_config, vis_config):
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
+        session_id = str(uuid.uuid4())
+
+        if not model_id:
+            return initial_callbacks, session_id, no_update, no_update, True
+        
         with models_lock:
             model = models[model_id]
-        session_id = str(uuid.uuid4())
+        
         _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
         # Caching values
         _ = decode_layers(layers=layers, strategy=vis_config["strategy"], decoder=model.decoder, _session_id=session_id)
@@ -412,6 +417,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             decoder=model.decoder,
             _session_id=session_id,
         )
+
         # TODO: maybe add? # torch.cuda.empty_cache()
         return initial_callbacks, session_id, run_config, True, True
 
@@ -435,7 +441,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         prevent_initial_call=True,
     )
     def update_graph(
-        notify, tab_vis_config, vis_config, text, model_id, run_config, session_id
+        _, tab_vis_config, vis_config, text, model_id, run_config, session_id
     ):
         with models_lock:
             model = models[model_id]
@@ -566,42 +572,51 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         return fig
 
     @app.callback(
-        Output("model_id", "data"),
+        [
+            Output("model_id", "data", allow_duplicate=True),
+            Output("model_info", "data", allow_duplicate=True),
+        ],
         Input("model_select", "value"),
         prevent_initial_call=True,
     )
-    def update_model_id(model_id_select):
-        return model_id_select
+    def update_model_id(model_info):
+        model_info = decode_dataclass(model_info, ModelInfo)
+        return model_info.id, dataclasses.asdict(model_info)
 
     @app.callback(
         [
             Output("initial_callbacks", "data", allow_duplicate=True),
-            Output("model_id", "value"),
+            Output("model_id", "data", allow_duplicate=True),
+            Output("model_info", "data", allow_duplicate=True),
             Output("model_select_alert", "is_open"),
+            Output("new_model_notify", "data"),
         ],
         [
             Input("initial_callbacks", "data"),
             Input("model_id", "data"),
         ],
+        [
+            State("model_info", "data"),
+        ],
         running=[(Output("overlay", "class"), "overlay show", "overlay")],
         prevent_initial_call=True,
     )
-    def update_model(initial_callbacks, model_id):
+    def update_model(initial_callbacks, model_id, model_info):
         nonlocal models
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
-        
+
         if not model_id:
-            return initial_callbacks, no_update, False
-        
+            return initial_callbacks, no_update, no_update, False, no_update
+
         # A dedicated lock is used since we are interested in model loading being exclusive only with othere instances of itself
         with model_loading_lock:
             if model_id not in models:
-                model = ModelUtils(model_id, device, quant=True, hf_token=os.environ["HF_TOKEN"])
+                model = ModelUtils(ModelInfo(**model_info), hf_token=os.environ["HF_TOKEN"])
                 if model.model is None:
-                    return initial_callbacks, "", True
+                    return initial_callbacks, "", {}, 1, True, no_update
                 models |= {model_id: model}
                 
-        return initial_callbacks, model_id, False
+        return initial_callbacks, model_id, model_info, False, True
 
     @app.callback(
         [
@@ -712,9 +727,24 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
                 cur = time.time()
                 models[model_id].heartbeat_stamp = cur
 
+    @app.callback(
+        [
+            Output("row_limit", "max"),
+        ],
+        Input("new_model_notify", "data"),
+        [
+            State("model_id", "data"),
+        ],
+        prevent_initial_call=True,
+    )
+    def update_components_new_model(_, model_id):
+        with models_lock:
+            model = models[model_id]
+        return model.model_config.num_hidden_layers, 
+
 
     # Client-side callbacks
-    
+
     clientside_callback(
         ClientsideFunction(
             namespace="clientside",

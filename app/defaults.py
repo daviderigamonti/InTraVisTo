@@ -2,15 +2,17 @@ import dataclasses
 
 import plotly.graph_objects as go
 
+from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, ModelInfo
 from sankey import SankeyParameters
-from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+from app.constants import *  # pylint:disable=W0401,W0614
 
 DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
 DEFAULT_EMB_TYPE = EmbeddingsType.BLOCK_OUTPUT
 DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
-DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
+DEFAULT_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
+DEFAULT_MODEL = ModelInfo(DEFAULT_MODEL_ID, CUDA_DEVICE, True)
 DEFAULT_INITIAL_CALLS = ["update_model", "call_model_generate"]
 
 DEFAULT_FIGURE = go.Figure(layout={

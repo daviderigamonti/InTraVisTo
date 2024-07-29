@@ -1,13 +1,12 @@
 from dash import html, dcc
 
 import dash_bootstrap_components as dbc
-import numpy as np
 
 from app.constants import *  # pylint:disable=W0401,W0614
 from app.defaults import * # pylint:disable=W0401,W0614
 
 
-def generate_layout(model_config):
+def generate_layout():
     return html.Div([
         _navbar(),
         html.Div([
@@ -18,7 +17,7 @@ def generate_layout(model_config):
                     _modes(),
                 ]),
                 dbc.Col([
-                    _settings(model_config),
+                    _settings(),
                 ])
             ]),
             html.Hr(),
@@ -132,7 +131,7 @@ def _injects():
     fluid=True,
 )
 
-def _settings(model_config):
+def _settings():
     return dbc.Col([
         dbc.Row([
             html.H4("Settings")
@@ -146,7 +145,7 @@ def _settings(model_config):
                             dbc.Select(
                                 id="model_select",
                                 options=MODEL_MAP,
-                                value=DEFAULT_MODEL,
+                                value=encode_dataclass(DEFAULT_MODEL),
                                 className="form-select borderpx-1 w-100"
                             ),
                             dbc.Alert(
@@ -223,7 +222,7 @@ def _settings(model_config):
                 dbc.Row([
                     dbc.Input(
                         id="row_limit", type='number', value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["rowlimit"],
-                        min=1, max=model_config.num_hidden_layers,
+                        min=1, max=1,
                         className="w-20",
                     ),
                     html.Label("Sankey depth", className="w-80"),
@@ -241,8 +240,10 @@ def _stores():
         dcc.Store(id="sankey_vis_config", data=DEFAULT_SANKEY_VIS_CONFIG),
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),
         dcc.Store(id="generation_notify"),
+        dcc.Store(id="new_model_notify"),
         dcc.Store(id="injection_card_id", data=0),
-        dcc.Store(id="model_id", data=DEFAULT_MODEL),
+        dcc.Store(id="model_id", data=DEFAULT_MODEL_ID),
+        dcc.Store(id="model_info", data=dataclasses.asdict(DEFAULT_MODEL)),
         dcc.Store(id="initial_callbacks", data=DEFAULT_INITIAL_CALLS),
         dcc.Store(id="session_id")
     )

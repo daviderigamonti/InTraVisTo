@@ -1,4 +1,20 @@
-from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+import dataclasses
+import json
+
+from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, ModelInfo
+
+
+def get_label_type_map(type_map, value):
+    return [i["label"] for i in type_map if i["value"] == value][0]
+
+def encode_dataclass(c):
+    return json.dumps(dataclasses.asdict(c))
+
+def decode_dataclass(c, class_name):
+    return class_name(**json.loads(c))
+
+
+CUDA_DEVICE = "cuda"
 
 DECODING_TYPE_MAP = [
     {"label": "Output Decoder", "value": DecodingType.OUTPUT},
@@ -27,10 +43,14 @@ RES_TYPE_MAP = [
 ]
 
 MODEL_MAP = [
-    {"label": "No Model", "value": ""},
-    {"label": "GPT-2", "value": "gpt2"},
-    {"label": "Llama 2", "value": "meta-llama/Llama-2-7b-hf"},
-    {"label": "Mistral Instruct", "value": "mistralai/Mistral-7B-Instruct-v0.2"},
+    {"label": "No Model", "value": encode_dataclass(ModelInfo())},
+    {"label": "GPT-2", "value": encode_dataclass(ModelInfo("gpt2", CUDA_DEVICE, False))},
+    {"label": "GPT-2 (CPU)", "value": encode_dataclass(ModelInfo("gpt2", "cpu", False))},
+    {"label": "Llama 2 7B (CPU)", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", "cpu", False))},
+    {"label": "Llama 2 7B (4bit)", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", CUDA_DEVICE, True))},
+    {"label": "Llama 2 7B", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", CUDA_DEVICE, False))},
+    {"label": "Mistral Instruct 0.2 (4bit)", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, True))},
+    {"label": "Mistral Instruct 0.2", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, False))},
 ]
 
 TABLE_Z_FORMAT = {
@@ -45,6 +65,3 @@ TABLE_WIDTH_INCREMENT = 85
 
 HEARTBEAT_INTERVAL = 10 # Seconds
 HEARTBEAT_TIMEOUT = 15 # Seconds
-
-def get_label_type_map(type_map, value):
-    return [i["label"] for i in type_map if i["value"] == value][0]
