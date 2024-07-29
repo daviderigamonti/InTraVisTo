@@ -233,14 +233,14 @@ class Decoder:
         for k, emb in cell.embeddings.items():
             secondary_tokens = []
             norms = []
-            for _ in range(self.max_rep):
+            for rep in range(self.max_rep):
                 logits = torch.matmul(emb, decoding_matrix.T)
                 token_id = logits.argmax()
                 real_embed = decoding_matrix[token_id]
                 secondary_token = self.tokenizer.convert_ids_to_tokens([token_id])[0]
                 norm = torch.norm(emb)
                 # Stop prematurely if norm is too small or if norm is bigger than previous one
-                if norm <= 0.01 or (len(norms) > 0 and norm >= norms[-1]):
+                if norm <= 0.01 or (len(norms) > 0 and norm >= norms[-1]) and rep != 0:
                     break
                 # Do not add repreated tokens
                 if secondary_token not in secondary_tokens:
@@ -331,7 +331,7 @@ class ModelUtils:
 
         # TODO: find a solution for this
         # Compute prefix tokens (9 is a random number)
-        prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).squeeze()
+        prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).flatten()
         prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
 
         MODEL_CONFIG = {

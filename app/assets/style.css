@@ -22,7 +22,7 @@
 
 .inject-card {
     width: 16em;
-    height: 7em;
+    height: 8em;
 }
 
 .inject-card p {
@@ -51,4 +51,16 @@
 .overlay.show {
     opacity: 1;
     visibility: visible;
+}
+
+#tooltip-target {
+    left: 0px;
+    top: 0px;
+    width: 85px;
+    height: 1px;
+    position: absolute;
+}
+
+.tooltip-bg {
+    background-color: var(--bs-tooltip-bg);
 }

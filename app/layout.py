@@ -25,23 +25,26 @@ def generate_layout(model_config):
             html.Hr(),
             html.Div(children=[
                 dbc.Spinner(
-                    dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element"),
+                    dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element", config={"displaylogo": False}),
                     spinner_class_name="spinner-graph", color="primary"
-                )
-            ], className="scrollable-div", id="tooltip-target"),
+                ),
+            ], id="scrollable_graph", className="scrollable-div"),
             html.Hr(),
             dbc.Spinner(
-                dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element"), 
+                dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element", config={"displaylogo": False}), 
                 spinner_class_name="spinner-graph", color="primary"
             ),
             dbc.Tooltip(
                 id="graph-tooltip", target="tooltip-target", is_open=False,
-                flip=False, placement="top", autohide=False
+                flip=False, placement="top", autohide=False, className="dash-tooltip", trigger="legacy",
             ),
             *_stores(),
             dcc.Interval(id="model_heartbeat", interval=HEARTBEAT_INTERVAL * 1000),
         ], className="container-fluid pt-2"),
-        html.Div([], id="overlay", className="overlay")
+        html.Div([], id="overlay", className="overlay"),
+        html.Div([], id="tooltip-target"),
+        html.Div([], id="javascript-inject", style={"display": "none"}),
+        html.Div(id="scrollable_table_js_store", children=[]),
     ])
 
 def _navbar():
@@ -208,6 +211,7 @@ def _settings(model_config):
 
 def _stores():
     return (
+        dcc.Store(id="table_scroll", data=0),
         dcc.Store(id="run_config", data=DEFAULT_RUN_CONFIG),
         dcc.Store(id="current_run_config"),
         dcc.Store(id="vis_config", data=DEFAULT_VIS_CONFIG),

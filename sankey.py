@@ -42,9 +42,6 @@ class SankeyParameters:
     print_indexes: bool = False
     only_nodes_labels: bool = False
     rescale_factor: int = 3
-    fixed_offsets: dict[str, float] = field(
-        default_factory=lambda: {"Node": 0, "FFNN": 0.02, "Attention": 0.02, "Intermediate": 0}
-    )
     column_pad: float = None
     # Correction to avoid feeding nodes with a coordinate value of 0, which causes problems with Plotly Sankey Diagrams
     sankey_zero: float = 0.000000000000001
@@ -241,11 +238,6 @@ def change_color_brightness(rgb_color, brightness):
 def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: SankeyParameters):
     # Handle multiple labels for tokens with multiple representations
     typemap = [next(v["type"] for k, v in elmap.items() if v["id"] == i) for i in range(len(elmap.keys()))]
-    # nodes_extra = [
-    #     {"text": l[0], "diff": "Diff from previous layer:" + " ".join(l[1])} if t in ["Node"]
-    #     else {"text": l, "diff": ""}
-    #     for l, t in zip(lab, typemap)
-    # ]
     nodes_extra = [
         {"text": l, "diff": ""} for l, t in zip(lab, typemap)
     ]
@@ -253,7 +245,6 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         lab = [l[0] for l, t in zip(lab, typemap)]
     else:
         lab = [np.squeeze(l[0]) if t in ["Node"] else np.squeeze(l) for l, t in zip(lab, typemap)]
-        # lab = [np.squeeze(l).item() for l in lab]
 
     # Generate numbered labels
     lab = [f"{k[1]} {lab[el['id']]}" if sankey_parameters.print_indexes and el["type"]
@@ -382,7 +373,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
             if el in max_link_list[el_ov]:
                 color = node_colors_ref[el]
             else:
-                color += [0.1]
+                color += [0.025]
         link_colors.append(color)
 
     # Convert colors and add opacities
@@ -391,53 +382,59 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
 
     # Generate columns based on maximum node width for each column to fit nodes into
     col_pad = sankey_parameters.column_pad
-    columns_width = [max([v["base"] if y == y_index else 0 for (y, v) in zip(revmap_y_sort, revmap_values_sort)])
-                     for y_index in range(0, max(revmap_y) + 1)]
-    s = sum(columns_width)
+    columns_width = {
+        y_index: max((
+            v["base"] if y == y_index else 0
+            for (y, v) in zip(revmap_y_sort, revmap_values_sort)
+        ))
+        # Iterate also considering attention/ffeedforward blocks as columns, hence starting from -0.5 with a step of 0.5
+        for y_index in np.arange(-0.5, max(revmap_y) + 1, 0.5)
+    }
+    l = len(columns_width)
+    s = sum(columns_width.values())
     # Infer optimal column padding if not specified
     if col_pad is None:
         r = 1 - s
-        col_pad = r / (len(columns_width) - 1) if r > 0 and len(columns_width) > 1 else 0
-    s += col_pad * len(columns_width)
-    columns_width = [w/s + col_pad for w in columns_width]
-    columns_ys = []
+        col_pad = r / (l - 1) if r > 0 and l > 1 else 0
+    s += col_pad * l
+    columns_width = {key: w/s + col_pad for key, w in columns_width.items()}
+    columns_ys = {}
     tot_w = 0
-    for w in columns_width:
-        columns_ys.append(tot_w)
+    for key, w in sorted(columns_width.items()):
+        columns_ys[key] = tot_w
         tot_w += w
 
     # Adjust coordinates
     revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
-    revmap_y = [
-        columns_ys[math.ceil(y)] + v["base"] / 2 - sankey_parameters.fixed_offsets[v["type"]]
-        for y, v in zip(revmap_y, revmap_values)
-    ]
+    revmap_y = [columns_ys[y] + v["base"] / 2 for y, v in zip(revmap_y, revmap_values)]
 
-    fig = go.Figure(go.Sankey(
+    fig = go.Figure(
+        go.Sankey(
         orientation="v",
         arrangement="fixed",
         valueformat=".5r",
-        node=dict(
-            customdata=nodes_extra,
-            hovertemplate="%{customdata.text}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
-            align="left",
-            label=lab,
-            color=node_colors,
-            x=revmap_x,
-            y=revmap_y,
-            pad=10000,
-        ),
-        link=dict(
-            customdata=links_extra,
-            hovertemplate="%{customdata.type} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
-            source=ov,
-            target=un,
-            value=rescaled_vl,
-            color=link_colors
-        )
+        node={
+            "customdata": nodes_extra,
+            "hovertemplate": "%{customdata.text}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
+            "align": "left",
+            "label": lab,
+            "color": node_colors,
+            "x": revmap_x,
+            "y": revmap_y,
+            "pad": 10000,
+        },
+        link={
+            "customdata": links_extra,
+            "hovertemplate": "%{customdata.type} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
+            "source": ov,
+            "target": un,
+            "value": rescaled_vl,
+            "color": link_colors
+        }
     ))
     fig.update_layout(
         font_size=sankey_parameters.font_size, font_family="Verdana", font_color="black",
         width=sankey_parameters.size, height=sankey_parameters.size,
+        modebar_remove=["select", "lasso", "resetScale"],
     )
     return fig

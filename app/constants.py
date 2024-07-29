@@ -28,6 +28,7 @@ RES_TYPE_MAP = [
 
 MODEL_MAP = [
     {"label": "No Model", "value": ""},
+    {"label": "GPT-2", "value": "gpt2"},
     {"label": "Llama 2", "value": "meta-llama/Llama-2-7b-hf"},
     {"label": "Mistral Instruct", "value": "mistralai/Mistral-7B-Instruct-v0.2"},
 ]
@@ -38,6 +39,9 @@ TABLE_Z_FORMAT = {
     ProbabilityType.ATT_RES_PERCENT: "<i>Contribution</i>: %{z:1.2%}",
     ProbabilityType.FFNN_RES_PERCENT: "<i>Contribution</i>: %{z:1.2%}",
 }
+
+TABLE_HEIGHT_INCREMENT = 32
+TABLE_WIDTH_INCREMENT = 85
 
 HEARTBEAT_INTERVAL = 10 # Seconds
 HEARTBEAT_TIMEOUT = 15 # Seconds

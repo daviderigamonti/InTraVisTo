@@ -148,8 +148,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         # input_hidden_states = generation_result["hidden_states"][0]
 
         per_token_layers = LayerWrapper(0, session_id=session)
-        for tok_hs in hidden_states[0][:-1]:
-            layer = CellWrapper()
+        for i, tok_hs in enumerate(hidden_states[0][:-1]):
+            layer = CellWrapper(layer_number=0, token_number=i)
             layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
             per_token_layers.cells.append(layer)
         layers.append(per_token_layers)
@@ -160,8 +160,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             # Iterate over tokens
             per_token_layers = LayerWrapper(layer_id + 1, session_id=session)
 
-            for tok_hs, tok_att, tok_ffnn, tok_inter in zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1]):
-                layer = CellWrapper()
+            for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1])):
+                layer = CellWrapper(layer_number=layer_id, token_number=token_id)
                 layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
                 layer.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
                 layer.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
@@ -268,12 +268,19 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             State("injection_card_id", "data"),
             State({"type": "custom_emb", "index": ALL}, "value"),
             State({"type": "custom_emb_location", "index": ALL}, "value"),
+            State({"type": "custom_decoding", "index": ALL}, "value"),
             State("run_config", "data"),
             State("vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
-    def update_run_config(max_new_tok, inj_button, inj_close_button, card_id, custom_emb, custom_emb_location, run_config, vis_config):
+    def update_run_config(
+        max_new_tok,
+        inj_button, inj_close_button,
+        card_id,
+        custom_emb, custom_emb_location, custom_decoding,
+        run_config, vis_config
+    ):
         if not ctx.triggered_id:
             raise PreventUpdate
         run_config["max_new_tok"] = max_new_tok
@@ -282,11 +289,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
                 close_button_id = ctx.triggered_id["index"]
                 run_config["injects"] = [inj for inj in run_config["injects"] if inj["id"] != close_button_id]
-            if ctx.triggered_id["type"] == "add_inj_button" and not all(v is None for v in inj_button) and custom_emb and custom_emb_location:
+            if ctx.triggered_id["type"] == "add_inj_button" and not all(v is None for v in inj_button) and custom_emb and custom_emb_location and custom_decoding:
                 run_config["injects"] = run_config["injects"] + [{
                     "id": card_id,
                     "text": custom_emb[0],
                     "location": custom_emb_location[0],
+                    "decoding": custom_decoding[0],
                     "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
                     "target_token": vis_config["x"] if "x" in vis_config else None,
                 }]
@@ -459,40 +467,32 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             text = [layer[1:] for layer in text]
             p = [layer[1:] for layer in p]
 
-        fig = go.Figure(
-            data=go.Heatmap(
-                z=p,
-                text=pd.DataFrame(text),
-                xgap=2,
-                ygap=2,
-                x=[i - 0.5 for i in range(0, input_len + output_len)],
-                y=list(range(0, model.model_config.num_hidden_layers + 1)),
-                hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
-                "<br><b>Layer</b>: %{y}" +
-                "<br><b>Token position</b>: %{x}" +
-                "<br><b>Secondary representations</b>: %{text}" +
-                "<extra></extra>",
-                texttemplate="%{text[0]}",
-                textfont={"size": tab_vis_config["font_size"]},
-                colorscale="blues"
-            )
-        )
+        fig = go.Figure(data=go.Heatmap(
+            z=p,
+            text=pd.DataFrame(text),
+            xgap=2,
+            ygap=2,
+            x=[i - 0.5 for i in range(0, input_len + output_len)],
+            y=list(range(0, model.model_config.num_hidden_layers + 1)),
+            hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
+            "<br><b>Layer</b>: %{y}" +
+            "<br><b>Token position</b>: %{x}" +
+            "<br><b>Secondary representations</b>: %{text}" +
+            "<extra></extra>",
+            texttemplate="%{text[0]}",
+            textfont={"size": tab_vis_config["font_size"]},
+            colorscale="blues",
+        ))
         fig.update_layout(
-            margin=dict(l=5, r=5, t=5, b=5),
-            height=1000,
-            width=(input_len + output_len) * 85,
-            yaxis=dict(
-                title_text="Transformer Layers",
-                tickmode="linear",
-                titlefont=dict(size=20),
-            ),
-            xaxis=dict(
-                title_text="Token Position",
-                tickmode="linear",
-                titlefont=dict(size=20),
-            ),
-            template="plotly"
+            margin={"l": 5, "r": 5, "t": 5, "b": 5},
+            height=(model.model_config.num_hidden_layers + 1) * TABLE_HEIGHT_INCREMENT,
+            width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
+            xaxis={"title_text": "Token Position", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
+            yaxis={"title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
+            template="plotly",
+            modebar_remove=["zoom", "pan", "zoomIn", "zoomOut", "autoScale"],
         )
+
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=8, line_color='white')
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=2, line_color='darkblue')
         fig.add_hline(y=0.5, line_width=8, line_color='white')
@@ -608,29 +608,36 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
     @app.callback(
         [
             Output("graph-tooltip", "is_open", allow_duplicate=True),
-            Output("graph-tooltip", "trigger"),
+            Output("tooltip-target", "style"),
             Output("graph-tooltip", "children", allow_duplicate=True),
         ],
         [
             Input("generation_notify", "data"),
             Input("main_graph", "clickData"),
         ],
-        State("graph-tooltip", "trigger"),
-        State("graph-tooltip", "autohide"),
+        [
+            State("table_scroll", "data"),
+        ],
         prevent_initial_call=True,
     )
-    def display_embedding_tooltip(gen_notify, click_data, gtt, autohide):
+    def display_embedding_tooltip(gen_notify, click_data, table_scroll):
         if click_data is None or ctx.triggered_id == "generation_notify":
-            return False, "", []
+            return False, no_update, []
 
         children = [extra_layout.generate_tooltip_children_layout(
             layer=click_data["points"][0]["y"],
             token=click_data["points"][0]["x"],
-        )]
+        )] if click_data["points"][0]["y"] > 0 else []
 
-        return True, "hover focus", children
+        x_tooltip = click_data["points"][0]["bbox"]["x0"] - table_scroll
+        y_tooltip = click_data["points"][0]["bbox"]["y0"]
 
-    
+        tooltip_style = {
+            "transform": f"translate({x_tooltip}px, {y_tooltip}px)"
+        }
+
+        return True, tooltip_style, children
+
     @app.callback(
             Output("inject_container", "children", allow_duplicate=True),
         [
@@ -641,17 +648,18 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             State("inject_container", "children"),
             State("custom_emb", "value"),
             State("custom_emb_location", "value"),
+            State("custom_decoding", "value"),
         ],
         prevent_initial_call=True,
     )
-    def add_injection(button, vis_config, inject_container, custom_emb, custom_emb_location):
+    def add_injection(button, vis_config, inject_container, custom_emb, custom_emb_location, custom_decoding):
         if button is None:
             raise PreventUpdate
         # TODO: where are target layer/token coming from?
         target_layer = vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None
         target_token = vis_config["x"] if "x" in vis_config else None
         return inject_container + [extra_layout.generate_inject_card(
-            button, custom_emb, custom_emb_location, target_layer, target_token
+            button, custom_emb, custom_emb_location, custom_decoding, target_layer, target_token
         )]
 
     @app.callback(
@@ -675,6 +683,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
                 card_id=inj["id"],
                 text=inj["text"],
                 position=inj["location"],
+                decoding=inj["decoding"],
                 token=inj["target_token"] - (1 if tab_vis_config["hide_col"] else 0),
                 layer=inj["target_layer"] + 1
             )
