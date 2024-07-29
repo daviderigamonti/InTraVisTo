@@ -27,6 +27,8 @@ DEFAULT_SANKEY_VIS_CONFIG = {
         rowlimit=7,
         show_0=False,
         font_size=DEFAULT_FONT_SIZE,
+        attention_opacity=0.1,
+        attention_highlight_k=1,
         only_nodes_labels=True
     )),
 }

@@ -26,20 +26,32 @@ class SankeyParameters:
     color_change_count_threshold: int = 3  # Number of virtual rows that should have the same color associated to them
     color_brightness_range: tuple[float, float] = (-0.5, 0.2)  # Brightness range for tokens color gradient
     node_opacity: float = 0.7  # Opacity of nodes
-    link_opacity: float = 0.4  # Opacity of links
-    non_residual_link_color: tuple[int, int, int] = (100, 100, 100)  # Default color for non-resiudal links
+    link_opacity: float = 0.6  # Opacity of links
     node_color_map: dict[str, float] = field(
         default_factory=lambda: {
             "Default": (220, 220, 220),
             "Node": (33, 150, 243),
-            "FFNN": (107, 185, 247),
-            "Attention": (144, 203, 249),
-            "Intermediate": (26, 166, 227)
+            "Intermediate": (33, 150, 243),
+            "FFNN": (224, 31, 92),
+            "Attention": (93, 224, 31),
+        }
+    )
+    link_color_map: dict[str, float] = field(
+        default_factory=lambda: {
+            "Default": (100, 100, 100),
+            "residual_att": (31, 93, 224),
+            "residual_ff": (31, 93, 224),
+            "att_in": (93, 224, 31),
+            "att_out": (93, 224, 31),
+            "ff_in": (31, 93, 224),
+            "ff_out": (224, 31, 92),
         }
     )
     color_nodes: bool = False  # If set to true, color nodes based on the colormap, otherwise all nodes will have their default color
+    attention_opacity: float = 0.1
     # LAYOUT
     print_indexes: bool = False
+    attention_highlight_k: int = 1
     only_nodes_labels: bool = False
     rescale_factor: int = 3
     column_pad: float = None
@@ -260,13 +272,11 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     links_extra = [{"v": v, "type": t} for v, t in zip(vl, types)]
 
     # Create a map containing attention links with largest values for each node
-    # TODO: hardcoded k = 1
-    k = 1
     max_link_list = defaultdict(list)
     for el_ov, el_un, typ, value in zip(ov, un, types, vl):
         if typ == "att_in":
             heapq.heappush(max_link_list[el_ov], (value, el_un))
-            if len(max_link_list[el_ov]) > k:
+            if len(max_link_list[el_ov]) > sankey_parameters.attention_highlight_k:
                 heapq.heappop(max_link_list[el_ov])
     max_link_list = {k: [tup[1] for tup in v] for k, v in max_link_list.items()}
 
@@ -362,18 +372,15 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         for m in kl_mask
         if m or (i := i + 1) or True
     ]
-    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.2, range_max=1.2)):
-        color = sankey_parameters.non_residual_link_color.copy()
+    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.4, range_max=1)):
+        color = sankey_parameters.link_color_map[typ].copy()
         # Color residuals according todifference of kl divergence
         if kl is not None:
-            # TODO hardcoded color
-            color = change_color_brightness((255, 99, 71), kl)
+            color = change_color_brightness(color, kl)
         elif typ in ["att_in"]:
             # Color attention following max attention values
-            if el in max_link_list[el_ov]:
-                color = node_colors_ref[el]
-            else:
-                color += [0.025]
+            if el not in max_link_list[el_ov]:
+                color = sankey_parameters.link_color_map["Default"].copy() + [sankey_parameters.attention_opacity,]
         link_colors.append(color)
 
     # Convert colors and add opacities
@@ -387,7 +394,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
             v["base"] if y == y_index else 0
             for (y, v) in zip(revmap_y_sort, revmap_values_sort)
         ))
-        # Iterate also considering attention/ffeedforward blocks as columns, hence starting from -0.5 with a step of 0.5
+        # Iterate also considering attention/feedforward blocks as columns, hence starting from -0.5 with a step of 0.5
         for y_index in np.arange(-0.5, max(revmap_y) + 1, 0.5)
     }
     l = len(columns_width)
@@ -406,7 +413,11 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
 
     # Adjust coordinates
     revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
-    revmap_y = [columns_ys[y] + v["base"] / 2 for y, v in zip(revmap_y, revmap_values)]
+    revmap_y = [
+        # Shift attention/ffnn nodes closer to their reference nodes
+        columns_ys[y] + v["base"] / 2 if y == math.floor(y) else columns_ys[y] + v["base"] 
+        for y, v in zip(revmap_y, revmap_values)
+    ]
 
     fig = go.Figure(
         go.Sankey(
@@ -435,6 +446,6 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     fig.update_layout(
         font_size=sankey_parameters.font_size, font_family="Verdana", font_color="black",
         width=sankey_parameters.size, height=sankey_parameters.size,
-        modebar_remove=["select", "lasso", "resetScale"],
+        modebar_remove=["select", "lasso"]
     )
     return fig

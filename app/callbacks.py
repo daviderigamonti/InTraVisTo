@@ -7,7 +7,7 @@ import time
 import gc
 import os
 
-from dash import Output, Input, State, ctx, no_update, ALL
+from dash import Output, Input, State, ctx, no_update, ALL, clientside_callback, ClientsideFunction
 from dash.exceptions import PreventUpdate
 from transformers import GenerationConfig
 
@@ -77,13 +77,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             inj_token = inj_token[mask]
 
             # TODO: multitoken embeddings are averaged by default
-            # TODO: injected embeddings are interpolated by default
-            encoding = model.decoder.decoding_matrix[DecodingType.LINEAR]()
+            encoding = model.decoder.decoding_matrix[inject["decoding"]]()
             # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
             _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
             encoding = next(encoding)
             print("Averaged multi-tokens for embedding injection")
-            print("Interpolated embeddings for injection")
 
             # TODO: inject info creation
             inject_translate = {
@@ -115,16 +113,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         }
 
         generation_result = model.model.generate(inputs.input_ids, **wrapper_gen_config)
-        # TODO: test wrong last token
-        #gen_config = GenerationConfig(
-        #    output_attentions=True,
-        #    output_hidden_states=True,
-        #    #output_scores=True,
-        #    return_dict_in_generate=True,
-        #    pad_token_id=model.model_config.eos_token_id,
-        #    max_new_tokens=run_config["max_new_tok"],
-        #)
-        #generation_result = model.model.generate(inputs.input_ids, generation_config=gen_config)
 
         def standardize_wrapped_tensors(t):
             s = torch.stack(t, dim=0).squeeze().detach()
@@ -334,6 +322,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             Input("vis_config", "data"),
             Input('row_limit', 'value'),
             Input('hide_0', 'value'),
+            Input("att_opacity", "value"),
+            Input("att_high_k", "value"),
             Input("hide_labels", "value"),
             Input('font_size', 'value'),
         ],
@@ -343,7 +333,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         ],
         prevent_initial_call=True,
     )
-    def update_sankey_vis_config(gen_notify, vis_config, row_limit, hide_0, hide_labels, font_size, hide_col, sankey_vis_config):
+    def update_sankey_vis_config(
+        gen_notify, vis_config, row_limit, hide_0, att_opacity, attention_high_k, hide_labels,
+        font_size, hide_col, sankey_vis_config
+    ):
         token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
         layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
         row_limit = row_limit if layer - row_limit - 1 >= 0 or layer == 0 else layer
@@ -355,8 +348,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
                 token_index=token,
                 rowlimit=row_limit,
                 show_0=not hide_0,
-                font_size=font_size,
+                attention_opacity=att_opacity,
+                attention_highlight_k=attention_high_k,
                 only_nodes_labels=hide_labels,
+                font_size=font_size,
             ))
         }
         return sankey_vis_config
@@ -491,6 +486,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
             yaxis={"title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
             template="plotly",
             modebar_remove=["zoom", "pan", "zoomIn", "zoomOut", "autoScale"],
+            dragmode=False,
         )
 
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=8, line_color='white')
@@ -538,7 +534,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         if (
             "x" not in vis_config or "y" not in vis_config or
             vis_config["x"] is None or vis_config["y"] is None or
-            vis_config["x"] <= 0 or vis_config["y"] <= 0
+            # Set threhsold to 1 when not visualizing token 0, to avoid visualization glitches
+            vis_config["x"] <= (0 if sankey_vis_config["sankey_parameters"]["show_0"] else 1) or
+            vis_config["y"] <= (0 if sankey_vis_config["sankey_parameters"]["show_0"] else 1)
         ):
             x, y = None, None
         else:
@@ -607,9 +605,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
 
     @app.callback(
         [
-            Output("graph-tooltip", "is_open", allow_duplicate=True),
-            Output("tooltip-target", "style"),
-            Output("graph-tooltip", "children", allow_duplicate=True),
+            Output("graph_tooltip", "is_open", allow_duplicate=True),
+            Output("tooltip_target", "style"),
+            Output("graph_tooltip", "children", allow_duplicate=True),
         ],
         [
             Input("generation_notify", "data"),
@@ -621,13 +619,13 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
         prevent_initial_call=True,
     )
     def display_embedding_tooltip(gen_notify, click_data, table_scroll):
-        if click_data is None or ctx.triggered_id == "generation_notify":
+        if click_data is None or ctx.triggered_id == "generation_notify" or click_data["points"][0]["y"] <= 0:
             return False, no_update, []
 
         children = [extra_layout.generate_tooltip_children_layout(
             layer=click_data["points"][0]["y"],
             token=click_data["points"][0]["x"],
-        )] if click_data["points"][0]["y"] > 0 else []
+        )]
 
         x_tooltip = click_data["points"][0]["bbox"]["x0"] - table_scroll
         y_tooltip = click_data["points"][0]["bbox"]["y0"]
@@ -713,3 +711,24 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock, devi
                 # Revive current model
                 cur = time.time()
                 models[model_id].heartbeat_stamp = cur
+
+
+    # Client-side callbacks
+    
+    clientside_callback(
+        ClientsideFunction(
+            namespace="clientside",
+            function_name="detect_scroll_inject"
+        ),
+        Output("javascript_inject", "children"),
+        Input("javascript_inject", "children")
+    )
+
+    clientside_callback(
+        ClientsideFunction(
+            namespace="clientside",
+            function_name="update_scroll"
+        ),
+        Output("table_scroll", "data"),
+        Input("scrollable_table_js_store", "children"),
+    )

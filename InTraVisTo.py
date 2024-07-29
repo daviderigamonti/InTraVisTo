@@ -59,25 +59,6 @@ app.layout = generate_layout(model_config)
 
 generate_callbacks(app, cache, models, models_lock, model_loading_lock, device)
 
-from dash import clientside_callback, ClientsideFunction, Input, Output, State
-clientside_callback(
-    ClientsideFunction(
-        namespace="clientside",
-        function_name="detect_scroll_inject"
-    ),
-    Output("javascript-inject", "children"),
-    Input("javascript-inject", "children")
-)
-
-clientside_callback(
-    ClientsideFunction(
-        namespace="clientside",
-        function_name="update_scroll"
-    ),
-    Output("table_scroll", "data"),
-    Input("scrollable_table_js_store", "children"),
-)
-
 if __name__ == '__main__':
 
     app.run(debug=False, host="0.0.0.0", port="8892")

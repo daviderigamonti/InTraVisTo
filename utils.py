@@ -215,7 +215,7 @@ class Decoder:
         # TODO: n_layers + 1 because we assume that the embedding layer is also being decoded, maybe fix?
         n_layers = self.model_config.num_hidden_layers
         return (
-            ( (n_layers ** 2 - layer_n ** 2) * matrix_in + (layer_n ** 2) * (matrix_out) ) / n_layers
+            ( (n_layers ** 2 - layer_n ** 2) * matrix_in + (layer_n ** 2) * (matrix_out) ) / (n_layers ** 2)
             for layer_n in range(0, n_layers + 1)
         )
     
