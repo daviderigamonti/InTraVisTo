@@ -16,6 +16,8 @@ def decode_dataclass(c, class_name):
 
 CUDA_DEVICE = "cuda"
 
+DASH_SESSION_DIFF_GEN = "TOKEN_DIFFS"
+
 DECODING_TYPE_MAP = [
     {"label": "Output Decoder", "value": DecodingType.OUTPUT},
     {"label": "Linear Interpolation", "value": DecodingType.LINEAR},
@@ -46,7 +48,6 @@ MODEL_MAP = [
     {"label": "No Model", "value": encode_dataclass(ModelInfo())},
     {"label": "GPT-2", "value": encode_dataclass(ModelInfo("gpt2", CUDA_DEVICE, False))},
     {"label": "GPT-2 (CPU)", "value": encode_dataclass(ModelInfo("gpt2", "cpu", False))},
-    {"label": "Llama 2 7B (CPU)", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", "cpu", False))},
     {"label": "Llama 2 7B (4bit)", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", CUDA_DEVICE, True))},
     {"label": "Llama 2 7B", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", CUDA_DEVICE, False))},
     {"label": "Mistral Instruct 0.2 (4bit)", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, True))},

@@ -194,9 +194,9 @@ class Decoder:
         self.model_config = model_config
         self.decoding_matrix = {
             DecodingType.INPUT:
-                lambda: ( self.input_embedding.weight for _ in range(self.model_config.num_hidden_layers + 1) ),
+                lambda: ( self.input_embedding.weight for _ in range(self.model_config.num_hidden_layers + 2) ),
             DecodingType.OUTPUT:
-                lambda: ( self.output_embedding.weight for _ in  range(self.model_config.num_hidden_layers + 1) ),
+                lambda: ( self.output_embedding.weight for _ in  range(self.model_config.num_hidden_layers + 2) ),
             DecodingType.LINEAR:
                 lambda: self.linear_interpolation(self.input_embedding.weight, self.output_embedding.weight),
             DecodingType.QUADRATIC:
@@ -204,16 +204,16 @@ class Decoder:
         }
 
     def linear_interpolation(self, matrix_in, matrix_out):
-        # TODO: n_layers + 1 because we assume that the embedding layer is also being decoded, maybe fix?
-        n_layers = self.model_config.num_hidden_layers
+        # TODO: n_layers + 1 + 1 because we assume that the embedding layer/final norm layer are also being decoded
+        n_layers = self.model_config.num_hidden_layers + 1
         return (
             ( (n_layers - layer_n) * matrix_in + layer_n * (matrix_out) ) / n_layers
             for layer_n in range(0, n_layers + 1)
         )
 
     def quadratic_interpolation(self, matrix_in, matrix_out):
-        # TODO: n_layers + 1 because we assume that the embedding layer is also being decoded, maybe fix?
-        n_layers = self.model_config.num_hidden_layers
+        # TODO: n_layers + 1 + 1 because we assume that the embedding layer/final norm layer are also being decoded
+        n_layers = self.model_config.num_hidden_layers + 1
         return (
             ( (n_layers ** 2 - layer_n ** 2) * matrix_in + (layer_n ** 2) * (matrix_out) ) / (n_layers ** 2)
             for layer_n in range(0, n_layers + 1)

@@ -130,11 +130,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
 
         # TODO: attaching normalized output states to hidden states tensor in place of the last layer states
-        hidden_states[-1, :, :] = generation_result["output_hidden_state"][0, :, :].detach()
+        #hidden_states[-1, :, :] = generation_result["output_hidden_state"][0, :, :].detach()
 
-        # 1- Prepare matrix of input tokens hidden_state:  N_TOKENS x N_LAYER
-        # input_hidden_states = generation_result["hidden_states"][0]
+        # Append normalized output states to hidden states tensor
+        hidden_states = torch.cat(
+            (hidden_states, generation_result["output_hidden_state"].detach()), dim=0
+        )
 
+        # Handle embedding layer tokens
         per_token_layers = LayerWrapper(0, session_id=session)
         for i, tok_hs in enumerate(hidden_states[0][:-1]):
             layer = CellWrapper(layer_number=0, token_number=i)
@@ -144,7 +147,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         # TODO: fix variable names
         # Iterate over layers
-        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
+        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:-1], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
             # Iterate over tokens
             per_token_layers = LayerWrapper(layer_id + 1, session_id=session)
 
@@ -157,9 +160,18 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 per_token_layers.cells.append(layer)
             layers.append(per_token_layers)
 
-        for layer_hs, layer in zip(hidden_states, layers[1:]):
+        for layer_hs, layer in zip(hidden_states, layers[1:-1]):
             for tok_hs, layer_token in zip(layer_hs, layer):
                 layer_token.add_embedding(tok_hs, EmbeddingsType.BLOCK_INPUT)
+
+        # Handle normalized layer tokens
+        last = len(layers)
+        per_token_layers = LayerWrapper(last, session_id=session)
+        for i, tok_hs in enumerate(hidden_states[last][:-1]):
+            layer = CellWrapper(layer_number=last, token_number=i)
+            layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+            per_token_layers.cells.append(layer)
+        layers.append(per_token_layers)
 
         return generation_output, layers, input_len, output_len, session
 
@@ -188,33 +200,36 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
-        # TODO: Standardize differentiating value for session id
-        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=model.decoder, _session_id=session_id + "TOKEN_DIFFS")
+        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=model.decoder, _session_id=session_id + DASH_SESSION_DIFF_GEN)
         token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
         attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
 
         attentions = generated_output["attentions"]
+        # TODO: possibly use a map
         kl_diffs_ii = [
             torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT), dim=0)
-            for i in range(1, len(layers))
+            for i in range(1, len(layers)-1)
         ]
         kl_diffs_ai = [
             torch.stack(layer.get_kldiff(layer, EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION), dim=0)
-            for layer in layers[1:]
+            for layer in layers[1:-1]
         ]
         kl_diffs_io = [
             torch.stack(layer.get_kldiff(layer, EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL), dim=0)
-            for layer in layers[1:]
+            for layer in layers[1:-1]
         ]
         kl_diffs_if = [
             torch.stack(layer.get_kldiff(layer, EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL), dim=0)
-            for layer in layers[1:]
+            for layer in layers[1:-1]
         ]
         kl_diffs_fo = [
             torch.stack(layer.get_kldiff(layer, EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF), dim=0)
-            for layer in layers[1:]
+            for layer in layers[1:-1]
+        ]
+        kl_diffs_oo = [None] * (len(layers) - 2) + [
+            torch.stack(layers[-1].get_kldiff(layers[-2], EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT), dim=0)
         ]
         # TODO: choose how to pass values (as torch tensors or python lists)
         #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
@@ -223,6 +238,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "ffnn_res_percent": ffnn_res_percent, "diff": token_diffs,
             "kl_diff_in-int": kl_diffs_ii, "kl_diff_att-int": kl_diffs_ai,
             "kl_diff_int-out": kl_diffs_io, "kl_diff_int-ff": kl_diffs_if, "kl_diff_ff-out": kl_diffs_fo,
+            "kl_diff_out-out": kl_diffs_oo,
         }
 
         return dfs, linkinfo, input_len, output_len
@@ -339,7 +355,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     ):
         token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
         layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
-        row_limit = row_limit if layer - row_limit - 1 >= 0 or layer == 0 else layer
+        row_limit = row_limit
         hide_0 = len(hide_0) > 0
         hide_labels = len(hide_labels) > 0
         sankey_vis_config |= {
@@ -474,7 +490,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             xgap=2,
             ygap=2,
             x=[i - 0.5 for i in range(0, input_len + output_len)],
-            y=list(range(0, model.model_config.num_hidden_layers + 1)),
+            y=list(range(0, model.model_config.num_hidden_layers + 2)),
             hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
             "<br><b>Layer</b>: %{y}" +
             "<br><b>Token position</b>: %{x}" +
@@ -486,7 +502,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ))
         fig.update_layout(
             margin={"l": 5, "r": 5, "t": 5, "b": 5},
-            height=(model.model_config.num_hidden_layers + 1) * TABLE_HEIGHT_INCREMENT,
+            height=(model.model_config.num_hidden_layers + 2) * TABLE_HEIGHT_INCREMENT,
             width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
             xaxis={"title_text": "Token Position", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
             yaxis={"title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
@@ -499,6 +515,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=2, line_color='darkblue')
         fig.add_hline(y=0.5, line_width=8, line_color='white')
         fig.add_hline(y=0.5, line_width=2, line_color='darkblue')
+        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color='white')
+        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color='darkblue')
 
         offset = 0 if tab_vis_config["hide_col"] else 1
         # Injects reminders
@@ -549,20 +567,24 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             x, y = vis_config["x"], vis_config["y"]
 
         sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
+        
         dfs, linkinfo, input_len, output_len = generate_sankey_info(
             text, model_id, run_config, session_id, vis_config["strategy"], vis_config["res_contrib"]
         )
 
+        row_limit = sankey_param.rowlimit
+        sankey_param.rowlimit = row_limit if sankey_param.row_index - row_limit - 1 >= 0 or sankey_param.row_index == 0 else sankey_param.row_index
+
         if not sankey_param.show_0:
             dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
-            linkinfo = {key: [layer[1:] for layer in link] for key, link in linkinfo.items()}
+            linkinfo = {key: [layer[1:] if layer is not None else None for layer in link] for key, link in linkinfo.items()}
             linkinfo["attentions"] = [[layer2[1:] for layer2 in layer1] for layer1 in linkinfo["attentions"]]
 
         token_offset = 1 if not sankey_param.show_0 else 0
         if x is None and y is None:
-            sankey_param.row_index = model.model_config.num_hidden_layers
+            sankey_param.row_index = model.model_config.num_hidden_layers + 1
             sankey_param.token_index = input_len + output_len - token_offset - 2
-            sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
+            sankey_param.rowlimit = sankey_param.row_index - row_limit
             sankey_info = generate_complete_sankey(dfs, linkinfo, sankey_param, output_len)
         else:
             sankey_param.token_index -= token_offset

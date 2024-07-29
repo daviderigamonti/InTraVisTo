@@ -25,7 +25,7 @@ class SankeyParameters:
     color_change_count_threshold: int = 3  # Number of virtual rows that should have the same color associated to them
     color_brightness_range: tuple[float, float] = (-0.5, 0.2)  # Brightness range for tokens color gradient
     node_opacity: float = 0.7  # Opacity of nodes
-    link_opacity: float = 0.6  # Opacity of links
+    link_opacity: float = 0.5  # Opacity of links
     node_color_map: dict[str, float] = field(
         default_factory=lambda: {
             "Default": (220, 220, 220),
@@ -38,6 +38,7 @@ class SankeyParameters:
     link_color_map: dict[str, float] = field(
         default_factory=lambda: {
             "Default": (100, 100, 100),
+            "residual_norm": (31, 93, 224),
             "residual_att": (31, 93, 224),
             "residual_ff": (31, 93, 224),
             "att_in": (93, 224, 31),
@@ -79,6 +80,7 @@ def cumulative_sankey_traces(
     over = []
     val = []
     types = []
+    norm_layer = False
     # Calculate current value of node by weighting its attention value for the parent's weight
     for index, el_index, base in zip(indexes, el_indexes, bases):
         res_w = linkinfo["attn_res_percent"][row-1][index].item()
@@ -88,59 +90,73 @@ def cumulative_sankey_traces(
         resattn_w += 0.0000000001 if resattn_w == 0.0 else (-0.0000000001 if resattn_w == 1.0 else 0)  # Prevent 0
         ff_w = 1 - resattn_w
         # Create FFNN / Attention / Intermediate nodes
-        ff_index = len(new_elmap.keys())
-        new_labels.append(dfs["ffnn"][row][index])
-        new_elmap[(round(row - 1 + 0.8, 2), round(index - 0.5, 2))] = {
-            "id": ff_index, "base": base * ff_w, "type": "FFNN"}
-        attn_index = len(new_elmap.keys())
-        new_labels.append(dfs["attention"][row][index])
-        new_elmap[(round(row - 1 + 0.45, 2), round(index - 0.5, 2))] = {
-            "id": attn_index, "base": base * attn_w, "type": "Attention"}
-        hid_index = len(new_elmap.keys())
-        new_labels.append(dfs["intermediate"][row][index])
-        new_elmap[(round(row - 1 + 0.65, 2), index)] = {"id": hid_index, "base": base, "type": "Intermediate"}
-        # Iterate over all elements of the next row
-        for i, label in enumerate(dfs["states"][row-1]):
-            v = base * attn_w * linkinfo["attentions"][row-1][index][i].item()
-            if v > 0:
-                over.append(attn_index)
-                # If node is already present store its information
-                if (row-1, i) in new_elmap:
-                    under.append(new_elmap[(row-1, i)]["id"])
-                    new_elmap[(row-1, i)]["base"] += v
-                # If the node is new create a new entry in the element map with a new sankey index
-                else:
-                    new_index = len(new_elmap.keys())
-                    new_labels.append(label)
-                    new_indexes.append(i)
-                    under.append(new_index)
-                    new_elmap[(row-1, i)] = {"id": new_index, "base": v, "type": "Node"}
-                val.append(v)
-                types.append("att_in")
-        # FFNN State
-        over.append(el_index)
-        under.append(ff_index)
-        val.append(base * ff_w)
-        types.append("ff_out")
-        over.append(ff_index)
-        under.append(hid_index)
-        val.append(base * ff_w)
-        types.append("ff_in")
-        # Attention State
-        over.append(hid_index)
-        under.append(attn_index)
-        val.append(base * attn_w)
-        types.append("att_out")
-        # Residuals
-        over.append(hid_index)
-        under.append(new_elmap[(row-1, index)]["id"])
-        val.append(base * res_w)
-        types.append("residual_att")
-        new_elmap[(row-1, index)]["base"] += base * res_w
-        over.append(el_index)
-        under.append(hid_index)
-        val.append(base * resattn_w)
-        types.append("residual_ff")
+        if index < len(dfs["ffnn"][row]):
+            ff_index = len(new_elmap.keys())
+            new_labels.append(dfs["ffnn"][row][index])
+            new_elmap[(round(row - 1 + 0.8, 2), round(index - 0.5, 2))] = {
+                "id": ff_index, "base": base * ff_w, "type": "FFNN"}
+            attn_index = len(new_elmap.keys())
+            new_labels.append(dfs["attention"][row][index])
+            new_elmap[(round(row - 1 + 0.45, 2), round(index - 0.5, 2))] = {
+                "id": attn_index, "base": base * attn_w, "type": "Attention"}
+            hid_index = len(new_elmap.keys())
+            new_labels.append(dfs["intermediate"][row][index])
+            new_elmap[(round(row - 1 + 0.65, 2), index)] = {"id": hid_index, "base": base, "type": "Intermediate"}
+        else:
+            norm_layer = True
+        if not norm_layer:
+            # Iterate over all elements of the next row
+            for i, label in enumerate(dfs["states"][row-1]):
+                v = (base * attn_w * linkinfo["attentions"][row-1][index][i].item())
+                if v > 0:
+                    over.append(attn_index)
+                    # If node is already present store its information
+                    if (row-1, i) in new_elmap:
+                        under.append(new_elmap[(row-1, i)]["id"])
+                        new_elmap[(row-1, i)]["base"] += v
+                    # If the node is new create a new entry in the element map with a new sankey index
+                    else:
+                        new_index = len(new_elmap.keys())
+                        new_labels.append(label)
+                        new_indexes.append(i)
+                        under.append(new_index)
+                        new_elmap[(row-1, i)] = {"id": new_index, "base": v, "type": "Node"}
+                    val.append(v)
+                    types.append("att_in")
+            # FFNN State
+            over.append(el_index)
+            under.append(ff_index)
+            val.append(base * ff_w)
+            types.append("ff_out")
+            over.append(ff_index)
+            under.append(hid_index)
+            val.append(base * ff_w)
+            types.append("ff_in")
+            # Attention State
+            over.append(hid_index)
+            under.append(attn_index)
+            val.append(base * attn_w)
+            types.append("att_out")
+            # Residuals
+            over.append(hid_index)
+            under.append(new_elmap[(row-1, index)]["id"])
+            val.append(base * res_w)
+            types.append("residual_att")
+            new_elmap[(row-1, index)]["base"] += base * res_w
+            over.append(el_index)
+            under.append(hid_index)
+            val.append(base * resattn_w)
+            types.append("residual_ff")
+        else:
+            # Skip-residual
+            new_index = len(new_elmap.keys())
+            new_labels.append(dfs["states"][row-1][index])
+            new_indexes.append(index)
+            new_elmap[(row-1, index)] = {"id": new_index, "base": base, "type": "Node"}
+            over.append(el_index)
+            under.append(new_index)
+            val.append(base)
+            types.append("residual_norm")
 
     # If depth limit is reached, stop recurring
     if row - 1 > rowlimit:
@@ -250,7 +266,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     # Handle multiple labels for tokens with multiple representations
     typemap = [next(v["type"] for k, v in elmap.items() if v["id"] == i) for i in range(len(elmap.keys()))]
     nodes_extra = [
-        {"text": l, "diff": ""} for l, t in zip(lab, typemap)
+        {"text": l, "diff": f"Difference from previous layer: {linkinfo["diff"][k[0]-1][k[1]]}" if t in ["Node"] and k[0] > 0 else ""}
+        for l, t, k in zip(lab, typemap, elmap.keys())
     ]
     if sankey_parameters.multirep:
         lab = [l[0] for l, t in zip(lab, typemap)]
@@ -265,10 +282,16 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     if sankey_parameters.only_nodes_labels:
         lab = [l if t in ["Node"] else "" for l, t in zip(lab, typemap)]
 
+    # TODO: move out
+    link_name_map = {
+        "residual_att": "Residual", "residual_ff": "Residual", "residual_norm": "Normalization",
+        "att_in": "Attention", "att_out": "Attention", 
+        "ff_in": "Residual", "ff_out": "Feed Forward"
+    }
     # Add non-rescaled info to links and nodes extra information
     for k, el in elmap.items():
         nodes_extra[el["id"]] = nodes_extra[el["id"]] | {"v": el["base"]}
-    links_extra = [{"v": v, "type": t} for v, t in zip(vl, types)]
+    links_extra = [{"v": v, "type": t, "name": link_name_map[t]} for v, t in zip(vl, types)]
 
     # Create a map containing attention links with largest values for each node
     max_link_list = defaultdict(list)
@@ -298,19 +321,9 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         *sorted(zip(revmap_x, revmap_y, revmap_values, revmap_indexes), key=lambda x: x[0]))
 
     # Add kl divergence values to residual links between consecutive layers
-    # TODO: clamping infinite values to max value
-    #max_kl = linkinfo["kl_diff"].replace([np.inf, -np.inf], np.nan).max(skipna=True).max()
-    # linkinfo["kl_diff"] = torch.stack(linkinfo["kl_diff"], dim=0)
-    # max_kl = torch.max(linkinfo["kl_diff"][torch.isfinite(linkinfo["kl_diff"])])
-    # def checkinf(x): return x if not np.isinf(x) else max_kl
-    # kl_values = [
-    #     checkinf(
-    #         linkinfo["kl_diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
-    #     ).item() if typ in ["residual", "ff_in"] else None
-    #     for typ, el in zip(types, un)
-    # ]
+    # TODO: move out
     kl_map = {
-        "residual_att": "kl_diff_in-int", "residual_ff": "kl_diff_int-out",
+        "residual_att": "kl_diff_in-int", "residual_ff": "kl_diff_int-out", "residual_norm": "kl_diff_out-out",
         "att_out": "kl_diff_att-int",
         "ff_in": "kl_diff_int-ff", "ff_out": "kl_diff_ff-out"
     }
@@ -323,16 +336,6 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     links_extra = [
         l | {"kl_diff": format_kl(kl) if kl is not None else ""}
         for l, kl in zip(links_extra, kl_values)
-    ]
-
-    diff_labels = [
-        linkinfo["diff"][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
-        if typ in ["residual_att", "residual_ff"] and math.ceil(revmap_y[el]) > 0 else None
-        for typ, el in zip(types, un)
-    ]
-    links_extra = [
-        l | {"diff": f"Difference from previous layer: {diff}" if diff is not None else ""}
-        for l, diff in zip(links_extra, diff_labels)
     ]
 
     # Build colors
@@ -371,7 +374,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         for m in kl_mask
         if m or (i := i + 1) or True
     ]
-    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.4, range_max=1)):
+    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.3, range_max=1.1)):
         color = sankey_parameters.link_color_map[typ].copy()
         # Color residuals according todifference of kl divergence
         if kl is not None:
@@ -435,7 +438,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         },
         link={
             "customdata": links_extra,
-            "hovertemplate": "%{customdata.type} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
+            "hovertemplate": "%{customdata.name} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<extra>%{customdata.v:.1%}</extra>",
             "source": ov,
             "target": un,
             "value": rescaled_vl,
