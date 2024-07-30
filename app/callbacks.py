@@ -486,6 +486,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             text = [layer[1:] for layer in text]
             p = [layer[1:] for layer in p]
 
+        offset = 0 if tab_vis_config["hide_col"] else 1
+
         fig = go.Figure(data=go.Heatmap(
             z=p,
             text=pd.DataFrame(text),
@@ -506,21 +508,35 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             margin={"l": 5, "r": 5, "t": 5, "b": 5},
             height=(model.model_config.num_hidden_layers + 2) * TABLE_HEIGHT_INCREMENT,
             width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
-            xaxis={"title_text": "Token Position", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
-            yaxis={"title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20}, "showgrid": False},
+            xaxis={
+                "title_text": "Token Position", "tickmode": "linear", "titlefont": {"size": 20}, 
+                "showgrid": False, "zeroline": False,
+                },
+            yaxis={
+                "title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20},
+                "showgrid": False, "zeroline": False, "range": [-0.5, model.model_config.num_hidden_layers + 1.5]
+            },
             template="plotly",
             modebar_remove=["zoom", "pan", "zoomIn", "zoomOut", "autoScale"],
             dragmode=False,
         )
 
-        fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=8, line_color='white')
-        fig.add_vline(x=input_len - 1 - 1 - 0.5, line_width=2, line_color='darkblue')
+        fig.add_shape(x0=input_len - 1 - 0.5, x1=input_len - 1 - 0.5, y0=-1, y1=0.5, line_width=8, line_color="white")
+        fig.add_shape(x0=input_len - 1 - 0.5, x1=input_len - 1 - 0.5, y0=-1, y1=0.5, line_width=2, line_color="darkblue")
+        fig.add_shape(
+            x0=input_len - 1 - 1 - 0.5, x1=input_len - 1 - 1 - 0.5, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            line_width=8, line_color="white"
+        )
+        fig.add_shape(
+            x0=input_len - 1 - 1 - 0.5, x1=input_len - 1 - 1 - 0.5, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            line_width=2, line_color="darkblue"
+        )
+
         fig.add_hline(y=0.5, line_width=8, line_color='white')
         fig.add_hline(y=0.5, line_width=2, line_color='darkblue')
         fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color='white')
         fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color='darkblue')
 
-        offset = 0 if tab_vis_config["hide_col"] else 1
         # Injects reminders
         for inj in run_config["injects"]:
             if inj["location"] == tab_vis_config["emb_type"]:
