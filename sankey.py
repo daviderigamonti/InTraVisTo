@@ -307,7 +307,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     if sankey_parameters.attention_select == AttentionHighlight.MIN_WEIGHT:
         for el_ov, el_un, typ, value in zip(ov, un, types, vl):
             if typ == "att_in":
-                max_att_list[el_ov] = []
+                _ = max_att_list[el_ov]
                 if value >= sankey_parameters.attention_highlight:
                     max_att_list[el_ov].append((value, el_un))
     elif sankey_parameters.attention_select == AttentionHighlight.TOP_K:
