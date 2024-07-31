@@ -6,17 +6,21 @@ from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContrib
 from sankey import SankeyParameters, AttentionHighlight
 from app.constants import *  # pylint:disable=W0401,W0614
 
-DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
+
 DEFAULT_EMB_TYPE = EmbeddingsType.BLOCK_OUTPUT
 DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
 DEFAULT_NORM = True
+
 DEFAULT_ATTENTION = AttentionHighlight.TOP_K
 DEFAULT_ATT_HIGH_K = 1
 DEFAULT_ATT_HIGH_W = 0.001
+
+DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
 DEFAULT_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
 DEFAULT_MODEL = ModelInfo(DEFAULT_MODEL_ID, CUDA_DEVICE, True)
+
 DEFAULT_INITIAL_CALLS = ["update_model", "call_model_generate"]
 
 DEFAULT_FIGURE = go.Figure(layout={
@@ -33,16 +37,16 @@ DEFAULT_VIS_CONFIG = {
     "norm": DEFAULT_NORM,
 }
 DEFAULT_SANKEY_VIS_CONFIG = {
+    "hide_start": True,
+    "reapport_start": True,
     "sankey_parameters": dataclasses.asdict(SankeyParameters(
         rowlimit=7,
-        show_0=False,
         font_size=DEFAULT_FONT_SIZE,
-        attention_opacity=0.0,
         only_nodes_labels=True
     )),
 }
 DEFAULT_TABLE_VIS_CONFIG = {
-    "hide_col": True,
+    "hide_start": True,
     "font_size": DEFAULT_FONT_SIZE,
     "emb_type": DEFAULT_EMB_TYPE,
     "colour": DEFAULT_PROB_TYPE,

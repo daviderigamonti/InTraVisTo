@@ -187,8 +187,8 @@ def _settings():
                 dbc.Row([
                     dbc.Checklist(
                         [{"label": "Hide starting token", "value": "hide"}],
-                        id="hide_col",
-                        value=["hide"] if DEFAULT_TABLE_VIS_CONFIG["hide_col"] else [],
+                        id="hide_start_table",
+                        value=["hide"] if DEFAULT_TABLE_VIS_CONFIG["hide_start"] else [],
                         labelStyle={"float": "left"},
                         switch=True,
                     ),
@@ -199,28 +199,30 @@ def _settings():
                 dbc.Row([
                     dbc.Checklist(
                         [{"label": "Hide starting token", "value": "hide"}],
-                        id="hide_0",
-                        value=["hide"] if not DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["show_0"] else [],
+                        id="hide_start_sankey",
+                        value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["hide_start"] else [],
                         labelStyle={"float": "left"},
                         switch=True,
                     ),
                 ], className="my-1"),
                 dbc.Row([
                     dbc.Checklist(
-                        [{"label": "Hide non-layer tokens", "value": "hide"}],
+                        [{"label": "Reapport weights to remaining nodes", "value": "reapport"}],
+                        id="reapport_start",
+                        value=["reapport"] if DEFAULT_SANKEY_VIS_CONFIG["reapport_start"] else [],
+                        labelStyle={"float": "left"},
+                        switch=True,
+                    ),
+                ], className="my-1"),
+                dbc.Row([
+                    dbc.Checklist(
+                        [{"label": "Hide token for intermediate nodes", "value": "hide"}],
                         id="hide_labels",
                         value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["only_nodes_labels"] else [],
                         labelStyle={"float": "left"},
                         switch=True,
                     ),
                 ], className="my-1"),
-                dbc.Row([
-                    html.Label("Attention base opacity", className="w-30 px-0"),
-                    dcc.Slider(
-                        0, 1, value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["attention_opacity"],
-                        step=0.05, marks={0: "0", 0.5: "0.5", 1: "1"}, id="att_opacity", className="w-70 py-0"
-                    ),
-                ], className="mx-2 my-2 d-flex align-items-center"),
                 dbc.Row([
                     dbc.Col(["Attention Highlight:"], className="col-md-auto"),
                     dbc.Col([
@@ -242,7 +244,7 @@ def _settings():
                 dbc.Row([
                     dbc.Input(
                         value=DEFAULT_ATT_HIGH_W,
-                        type="number", min=0, max=1, id="att_high_w", className="w-20",
+                        type="number", min=0, max=1, step=0.001, id="att_high_w", className="w-20",
                     ),
                     html.Label("Minimum attention weight", className="w-80"),
                 ], className="mx-2 my-2 align-items-center", id="att_high_w_div"),
@@ -252,7 +254,7 @@ def _settings():
                         min=1, max=1,
                         className="w-20",
                     ),
-                    html.Label("Sankey depth", className="w-80"),
+                    html.Label("N° of output layers to show", className="w-80"),
                 ], className="mx-2 my-2 d-flex align-items-center"),
             ])
         ])
@@ -269,7 +271,6 @@ def _stores():
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),
         dcc.Store(id="generation_notify"),
         dcc.Store(id="new_model_notify"),
-        dcc.Store(id="attention_high_store", data=0),
         dcc.Store(id="injection_card_id", data=0),
         dcc.Store(id="model_id", data=DEFAULT_MODEL_ID),
         dcc.Store(id="model_info", data=dataclasses.asdict(DEFAULT_MODEL)),

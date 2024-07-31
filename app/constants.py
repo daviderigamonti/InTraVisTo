@@ -46,11 +46,15 @@ RES_TYPE_MAP = [
 ]
 
 ATTENTION_ID_MAP = {
+    AttentionHighlight.NONE: "",
+    AttentionHighlight.ALL: "",
     AttentionHighlight.TOP_K: "att_high_k",
     AttentionHighlight.MIN_WEIGHT: "att_high_w",
 }
 
 ATTENTION_MAP = [
+    {"label": "None", "value": AttentionHighlight.NONE},
+    {"label": "All", "value": AttentionHighlight.ALL},
     {"label": "Top K attention weights", "value": AttentionHighlight.TOP_K},
     {"label": "Exclude low-value weights", "value": AttentionHighlight.MIN_WEIGHT},
     #{"label": "", "value": AttentionHighlight.TOP_P},

@@ -9,7 +9,7 @@ import gc
 from torch.cuda import OutOfMemoryError
 from torch import bfloat16
 from transformers import AutoTokenizer
-from scipy.special import kl_div # (ufuncs in scipy.special are written in C) pylint:disable=E0611
+from scipy.special import rel_entr # (ufuncs in scipy.special are written in C) pylint:disable=E0611
 
 import transformers
 import torch
@@ -45,8 +45,8 @@ def _res_contrib_norm(residual, x, embs, **kwargs):
     ).squeeze().detach().float().cpu()
 
 def _res_contrib_kl_div(residual, x, ref, emb_probs, **kwargs):
-    kldiv_res = kl_div(emb_probs[residual], emb_probs[ref]).sum()
-    kldiv_x = kl_div(emb_probs[x], emb_probs[ref]).sum()
+    kldiv_res = rel_entr(emb_probs[residual], emb_probs[ref]).sum()
+    kldiv_x = rel_entr(emb_probs[x], emb_probs[ref]).sum()
     return kldiv_x / (kldiv_res + kldiv_x)
 
 DEFAULT_SESSION_ID = "0"
@@ -173,7 +173,7 @@ class LayerWrapper:
         #     (cell1.get_embedding(emb_type).norm() + cell2.get_embedding(other_emb_type).norm()) / 2
         # ).float().detach().cpu()
         return [
-            kl_div(
+            rel_entr(
                 torch.nn.functional.softmax(cell1.get_embedding(emb_type, norm).float().detach().cpu(), dim=-1),
                 torch.nn.functional.softmax(cell2.get_embedding(other_emb_type, norm).float().detach().cpu(), dim=-1),
             ).sum()

@@ -350,14 +350,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Input("norm_emb", "value"),
         ],
         [
-            State("hide_col", "value"),
+            State("hide_start_table", "value"),
             State("vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
-    def update_vis_config(_, click_data, strategy, res_contrib, norm, hide_col, vis_config):
+    def update_vis_config(_, click_data, strategy, res_contrib, norm, hide_start_table, vis_config):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
-        col_0_offset = 1 if len(hide_col) > 0 else 0
+        col_0_offset = 1 if len(hide_start_table) > 0 else 0
         vis_config |= {"x": click_data["points"][0]["x"] + col_0_offset} if click_data else {"x": None}
         vis_config |= {"y": click_data["points"][0]["y"]} if click_data else {"y": None}
         vis_config |= {"strategy": strategy}
@@ -367,42 +367,42 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             vis_config |= {"x": None, "y": None}
         return vis_config, 
 
-
     @app.callback(
         Output("sankey_vis_config", "data"),
         [
             Input("generation_notify", "data"),
             Input("vis_config", "data"),
             Input("row_limit", "value"),
-            Input("hide_0", "value"),
-            Input("att_opacity", "value"),
-            Input("attention_high_store", "data"),
+            Input("reapport_start", "value"),
+            Input("hide_start_sankey", "value"),
+            Input("att_high_k", "value"),
+            Input("att_high_w", "value"),
+            Input("attention_select", "value"),
             Input("hide_labels", "value"),
             Input("font_size", "value"),
         ],
         [
-            State("attention_select", "value"),
             State("sankey_vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
     def update_sankey_vis_config(
-        _, vis_config, row_limit, hide_0, att_opacity, attention_high, hide_labels,
-        font_size, attention_select, sankey_vis_config
+        _, vis_config, row_limit, reapport_start, hide_start, att_high_k, att_high_w, att_select, hide_labels,
+        font_size, sankey_vis_config
     ):
         token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
         layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
-        hide_0 = len(hide_0) > 0
         hide_labels = len(hide_labels) > 0
+        att_high = [locals()[v] if v else "" for k,v in ATTENTION_ID_MAP.items() if k == att_select][0]
+        sankey_vis_config |= {"hide_start": len(hide_start) > 0}
+        sankey_vis_config |= {"reapport_start": len(reapport_start) > 0}
         sankey_vis_config |= {
             "sankey_parameters": dataclasses.asdict(SankeyParameters(
                 row_index=layer,
                 token_index=token,
                 rowlimit=row_limit,
-                show_0=not hide_0,
-                attention_opacity=att_opacity,
-                attention_select=attention_select,
-                attention_highlight=attention_high,
+                attention_select=att_select,
+                attention_highlight=att_high,
                 only_nodes_labels=hide_labels,
                 font_size=font_size,
             ))
@@ -411,20 +411,20 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
 
     @app.callback(
-        Output('table_vis_config', 'data'),
+        Output("table_vis_config", "data"),
         [
-            Input('hide_col', 'value'),
-            Input('font_size', 'value'),
+            Input("hide_start_table", "value"),
+            Input("font_size", "value"),
             Input("choose_embedding", "value"),
             Input("choose_colour", "value"),
         ],
         [
-            State('table_vis_config', 'data'),
+            State("table_vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
-    def update_table_vis_config(hide_col, font_size, emb_type, colour, vis_config):
-        vis_config |= {"hide_col": len(hide_col) > 0}
+    def update_table_vis_config(hide_start, font_size, emb_type, colour, vis_config):
+        vis_config |= {"hide_start": len(hide_start) > 0}
         vis_config |= {"font_size": font_size}
         vis_config |= {"emb_type": emb_type}
         vis_config |= {"colour": colour}
@@ -529,11 +529,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
 
         # Remove first column from visualization
-        if tab_vis_config["hide_col"]:
+        if tab_vis_config["hide_start"]:
             text = [layer[1:] for layer in text]
             p = [layer[1:] for layer in p]
 
-        offset = 0 if tab_vis_config["hide_col"] else 1
+        offset = 0 if tab_vis_config["hide_start"] else 1
 
         fig = go.Figure(data=go.Heatmap(
             z=p,
@@ -626,8 +626,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "x" not in vis_config or "y" not in vis_config or
             vis_config["x"] is None or vis_config["y"] is None or
             # Set threhsold to 1 when not visualizing token 0, to avoid visualization glitches
-            vis_config["x"] <= (0 if sankey_vis_config["sankey_parameters"]["show_0"] else 1) or
-            vis_config["y"] <= (0 if sankey_vis_config["sankey_parameters"]["show_0"] else 1)
+            vis_config["x"] <= (1 if sankey_vis_config["hide_start"] else 0) or
+            vis_config["y"] <= (1 if sankey_vis_config["hide_start"] else 0)
         ):
             x, y = None, None
         else:
@@ -642,12 +642,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         row_limit = sankey_param.rowlimit
         sankey_param.rowlimit = row_limit if sankey_param.row_index - row_limit - 1 >= 0 or sankey_param.row_index == 0 else sankey_param.row_index
 
-        if not sankey_param.show_0:
+        if sankey_vis_config["hide_start"]:
             dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
             linkinfo = {key: [layer[1:] if layer is not None else None for layer in link] for key, link in linkinfo.items()}
-            linkinfo["attentions"] = [[layer2[1:] for layer2 in layer1] for layer1 in linkinfo["attentions"]]
+            linkinfo["attentions"] = [[
+                (layer2[1:] / layer2[1:].sum()) if sankey_vis_config["reapport_start"] else layer2[1:]
+                for layer2 in layer1
+            ] for layer1 in linkinfo["attentions"]]
 
-        token_offset = 1 if not sankey_param.show_0 else 0
+        token_offset = 1 if sankey_vis_config["hide_start"] else 0
         if x is None and y is None:
             sankey_param.row_index = model.model_config.num_hidden_layers + 1
             sankey_param.token_index = input_len + output_len - token_offset - 2
@@ -790,7 +793,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 text=inj["text"],
                 position=inj["location"],
                 decoding=inj["decoding"],
-                token=inj["target_token"] - (1 if tab_vis_config["hide_col"] else 0),
+                token=inj["target_token"] - (1 if tab_vis_config["hide_start"] else 0),
                 layer=inj["target_layer"] + 1
             )
             for inj in run_config["injects"]
@@ -840,30 +843,24 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         run_config |= {"injects": []} 
         return model.model_config.num_hidden_layers, run_config
 
+    #TODO: change into something more standardized
     @app.callback(
         [
             Output("att_high_k_div", "style"),
             Output("att_high_w_div", "style"),
-            Output("attention_high_store", "data"),
         ],
         [
             Input("attention_select", "value"),
-            Input("att_high_k", "value"),
-            Input("att_high_w", "value"),
+            Input("att_high_k", "className"),
         ],
     )
-    def update_attention_layout(attention_select, att_high_k, att_high_w):
+    def update_attention_layout(attention_select ,a):
         _parameter_order = ["att_high_k", "att_high_w"]
-        if ctx.triggered_id in _parameter_order:
-            value = ctx.triggered[0]["value"] if ctx.triggered[0]["value"] is not None else 0.0
-            styles = [no_update] * len(_parameter_order)
-        else:
-            value = [locals()[v] for k,v in ATTENTION_ID_MAP.items() if k == attention_select][0]
-            styles = [
-                {"display": "flex"} if attention_select == p_key else {"display": "none"}
-                for p in _parameter_order if (p_key := next(k for k, v in ATTENTION_ID_MAP.items() if v == p)) and True
-            ]
-        return *styles, value
+        styles = [
+            {"display": "flex"} if attention_select == p_key else {"display": "none"}
+            for p in _parameter_order if (p_key := next(k for k, v in ATTENTION_ID_MAP.items() if v == p)) and True
+        ]
+        return styles
 
     # Client-side callbacks
 
