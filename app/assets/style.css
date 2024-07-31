@@ -119,6 +119,10 @@
     background-color: var(--bs-tooltip-bg);
 }
 
+.none {
+    display: none !important;
+}
+
 /* !!! Workaround for Sankey diagram un-removable modebar button!!! */
 .modebar-group .modebar-btn[data-title="Reset view"] {
     display: none;

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from collections import defaultdict
 from itertools import cycle
+from enum import Enum
 
 import heapq
 import math
@@ -8,6 +9,12 @@ import math
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
+
+
+class AttentionHighlight(str, Enum):
+    TOP_K = "top_k"
+    TOP_P = "top_p"
+    MIN_WEIGHT = "min_weight"
 
 
 @dataclass
@@ -51,7 +58,8 @@ class SankeyParameters:
     attention_opacity: float = 0.1
     # LAYOUT
     print_indexes: bool = False
-    attention_highlight_k: int = 1
+    attention_select: AttentionHighlight = AttentionHighlight.TOP_K
+    attention_highlight: object = 0
     only_nodes_labels: bool = False
     rescale_factor: int = 3
     column_pad: float = None
@@ -294,13 +302,21 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     links_extra = [{"v": v, "type": t, "name": link_name_map[t]} for v, t in zip(vl, types)]
 
     # Create a map containing attention links with largest values for each node
-    max_link_list = defaultdict(list)
-    for el_ov, el_un, typ, value in zip(ov, un, types, vl):
-        if typ == "att_in":
-            heapq.heappush(max_link_list[el_ov], (value, el_un))
-            if len(max_link_list[el_ov]) > sankey_parameters.attention_highlight_k:
-                heapq.heappop(max_link_list[el_ov])
-    max_link_list = {k: [tup[1] for tup in v] for k, v in max_link_list.items()}
+    max_att_list = defaultdict(list)
+    # TODO: map
+    if sankey_parameters.attention_select == AttentionHighlight.MIN_WEIGHT:
+        for el_ov, el_un, typ, value in zip(ov, un, types, vl):
+            if typ == "att_in":
+                max_att_list[el_ov] = []
+                if value >= sankey_parameters.attention_highlight:
+                    max_att_list[el_ov].append((value, el_un))
+    elif sankey_parameters.attention_select == AttentionHighlight.TOP_K:
+        for el_ov, el_un, typ, value in zip(ov, un, types, vl):
+            if typ == "att_in":
+                heapq.heappush(max_att_list[el_ov], (value, el_un))
+                if len(max_att_list[el_ov]) > sankey_parameters.attention_highlight:
+                    heapq.heappop(max_att_list[el_ov])
+    max_att_list = {k: [tup[1] for tup in v] for k, v in max_att_list.items()}
 
     # Rescale node and link values by a rescale factor to fit into graph
     rescale_factor = sankey_parameters.rescale_factor
@@ -381,7 +397,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
             color = change_color_brightness(color, kl)
         elif typ in ["att_in"]:
             # Color attention following max attention values
-            if el not in max_link_list[el_ov]:
+            if el not in max_att_list[el_ov]:
                 color = sankey_parameters.link_color_map["Default"].copy() + [sankey_parameters.attention_opacity,]
         link_colors.append(color)
 

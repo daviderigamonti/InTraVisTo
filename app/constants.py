@@ -2,6 +2,7 @@ import dataclasses
 import json
 
 from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, ModelInfo
+from sankey import AttentionHighlight
 
 
 def get_label_type_map(type_map, value):
@@ -44,6 +45,17 @@ RES_TYPE_MAP = [
     {"label": "KL Divergence proportion", "value": ResidualContribution.KL_DIV},
 ]
 
+ATTENTION_ID_MAP = {
+    AttentionHighlight.TOP_K: "att_high_k",
+    AttentionHighlight.MIN_WEIGHT: "att_high_w",
+}
+
+ATTENTION_MAP = [
+    {"label": "Top K attention weights", "value": AttentionHighlight.TOP_K},
+    {"label": "Exclude low-value weights", "value": AttentionHighlight.MIN_WEIGHT},
+    #{"label": "", "value": AttentionHighlight.TOP_P},
+]
+     
 MODEL_MAP = [
     {"label": "No Model", "value": encode_dataclass(ModelInfo())},
     {"label": "GPT-2", "value": encode_dataclass(ModelInfo("gpt2", CUDA_DEVICE, False))},

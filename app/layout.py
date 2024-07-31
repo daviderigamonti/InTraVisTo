@@ -170,6 +170,15 @@ def _settings():
                     ),
                     html.Label("Font size", className="w-75"),
                 ], className="mx-2 my-1 d-flex align-items-center"),
+                dbc.Row([
+                    dbc.Checklist(
+                        [{"label": "Use normalized embeddings", "value": "norm"}],
+                        id="norm_emb",
+                        value=["norm"] if DEFAULT_NORM else [],
+                        labelStyle={"float": "left"},
+                        switch=True,
+                    ),
+                ], className="my-2 mx-2 my-1 d-flex align-items-center"),
             ]),
             dbc.Col([
                 dbc.Row([
@@ -206,19 +215,37 @@ def _settings():
                     ),
                 ], className="my-1"),
                 dbc.Row([
-                    html.Label("Attention opacity", className="w-30 px-0"),
+                    html.Label("Attention base opacity", className="w-30 px-0"),
                     dcc.Slider(
                         0, 1, value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["attention_opacity"],
                         step=0.05, marks={0: "0", 0.5: "0.5", 1: "1"}, id="att_opacity", className="w-70 py-0"
                     ),
                 ], className="mx-2 my-2 d-flex align-items-center"),
                 dbc.Row([
+                    dbc.Col(["Attention Highlight:"], className="col-md-auto"),
+                    dbc.Col([
+                        dbc.Select(
+                            id="attention_select",
+                            options=ATTENTION_MAP,
+                            value=DEFAULT_ATTENTION,
+                            className="form-select borderpx-1 w-100"
+                        ),
+                    ]),
+                ], className="mx-2 my-2 d-flex align-items-center"),
+                dbc.Row([
                     dbc.Input(
-                        value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["attention_highlight_k"],
+                        value=DEFAULT_ATT_HIGH_K,
                         type="number", min=0, max=25, id="att_high_k", className="w-20",
                     ),
-                    html.Label("N° of highlighted attention traces", className="w-80"),
-                ], className="mx-2 my-2 d-flex align-items-center"),
+                    html.Label("Top K attention traces", className="w-80"),
+                ], className="mx-2 my-2 align-items-center", id="att_high_k_div"),
+                dbc.Row([
+                    dbc.Input(
+                        value=DEFAULT_ATT_HIGH_W,
+                        type="number", min=0, max=1, id="att_high_w", className="w-20",
+                    ),
+                    html.Label("Minimum attention weight", className="w-80"),
+                ], className="mx-2 my-2 align-items-center", id="att_high_w_div"),
                 dbc.Row([
                     dbc.Input(
                         id="row_limit", type='number', value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["rowlimit"],
@@ -242,6 +269,7 @@ def _stores():
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),
         dcc.Store(id="generation_notify"),
         dcc.Store(id="new_model_notify"),
+        dcc.Store(id="attention_high_store", data=0),
         dcc.Store(id="injection_card_id", data=0),
         dcc.Store(id="model_id", data=DEFAULT_MODEL_ID),
         dcc.Store(id="model_info", data=dataclasses.asdict(DEFAULT_MODEL)),

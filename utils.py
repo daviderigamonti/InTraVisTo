@@ -57,7 +57,9 @@ RESIDUAL_CONTRIBUTION = {
 
 
 class CellWrapper:
-    def __init__(self, layer_number=-1, token_number=-1, emb_keys=(), emb_block=torch.Tensor(), probabilities=None):
+    def __init__(
+        self, layer_number = -1, token_number = -1, emb_keys=(), emb_block=torch.Tensor(), probabilities = None
+    ):
         self.layer_number = layer_number
         self.token_number = token_number
         self.embeddings = dict(zip(emb_keys, emb_block))
@@ -65,14 +67,17 @@ class CellWrapper:
 
     def __reduce__(self):
         emb_keys = list(self.embeddings.keys())
-        emb_block = torch.stack(list(self.embeddings.values()), dim=0)
+        emb_block = torch.stack(list(self.embeddings.values()), dim = 0)
         return (self.__class__, (self.layer_number, self.token_number, emb_keys, emb_block, self.probabilities))
 
     def add_embedding(self, tensor: torch.Tensor, emb_type: EmbeddingsType):
         self.embeddings[emb_type] = tensor
 
-    def get_embedding(self, emb_type: EmbeddingsType):
-        return self.embeddings[emb_type]
+    def get_embedding(self, emb_type: EmbeddingsType, norm = None):
+        return norm(self.embeddings[emb_type]) if norm else self.embeddings[emb_type]
+
+    def get_embeddings(self, norm = None):
+        return {k: self.get_embedding(k, norm) for k, v in self.embeddings.items()}
 
     def add_probability(self, prob, decoding_strategy: str):
         self.probabilities[decoding_strategy] = prob
@@ -80,8 +85,8 @@ class CellWrapper:
     def get_probability(self, decoding_strategy):
         return self.probabilities[decoding_strategy]
 
-    def get_logits_info(self, emb_type: EmbeddingsType, decoding_matrix):
-        logits = torch.matmul(self.embeddings[emb_type], decoding_matrix.T).float()
+    def get_logits_info(self, emb_type: EmbeddingsType, decoding_matrix, norm = None):
+        logits = torch.matmul(self.get_embedding(emb_type, norm), decoding_matrix.T).float()
         probs = torch.nn.functional.softmax(logits, dim=-1)
         token_id = logits.argmax()
         return logits, probs, token_id
@@ -142,7 +147,7 @@ class LayerWrapper:
     def __repr__(self):
         return f"<LayerWrapper {self.layer_number} @ {self.session_id}>"
 
-    def slice_cells(self, start : int = 0, end : int = -1):
+    def slice_cells(self, start: int = 0, end: int = -1):
         end = end if end > 0 else len(self.cells)
         return LayerWrapper(layer_number=self.layer_number, cells=self.cells[start:end])
 
@@ -161,15 +166,17 @@ class LayerWrapper:
         return l
     
     # TODO: maybe inefficient?
-    def get_kldiff(self, other: Self, emb_type: EmbeddingsType, other_emb_type: EmbeddingsType = None):
+    def get_kldiff(self, other: Self, emb_type: EmbeddingsType, other_emb_type: EmbeddingsType = None, norm = None):
         other_emb_type = emb_type if other_emb_type is None else other_emb_type
+        # TODO: is weighting by norm mean still needed? 
+        # / (
+        #     (cell1.get_embedding(emb_type).norm() + cell2.get_embedding(other_emb_type).norm()) / 2
+        # ).float().detach().cpu()
         return [
             kl_div(
-                torch.nn.functional.softmax(cell1.get_embedding(emb_type).float().detach().cpu(), dim=-1),
-                torch.nn.functional.softmax(cell2.get_embedding(other_emb_type).float().detach().cpu(), dim=-1),
-            ).sum() / (
-                (cell1.get_embedding(emb_type).norm() + cell2.get_embedding(other_emb_type).norm()) / 2
-            ).float().detach().cpu()
+                torch.nn.functional.softmax(cell1.get_embedding(emb_type, norm).float().detach().cpu(), dim=-1),
+                torch.nn.functional.softmax(cell2.get_embedding(other_emb_type, norm).float().detach().cpu(), dim=-1),
+            ).sum()
             for cell1, cell2 in zip(self, other)
         ]
 
@@ -188,6 +195,7 @@ class LayerWrapper:
 class Decoder:
     def __init__(self, model, tokenizer, model_config, max_rep=5):
         self.tokenizer = tokenizer
+        self.norm = model.base_model.model.norm
         self.output_embedding = model.lm_head
         self.input_embedding = model.get_input_embeddings()
         self.max_rep = max_rep
@@ -219,18 +227,19 @@ class Decoder:
             for layer_n in range(0, n_layers + 1)
         )
     
-    def decode(self, layers: List[LayerWrapper], decoding):
+    def decode(self, layers: List[LayerWrapper], decoding: DecodingType, norm: bool):
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                self.decode_cell(cell, dm)
+                self.decode_cell(cell, dm, norm)
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
 
-    def decode_cell(self, cell: CellWrapper, decoding_matrix):
+    def decode_cell(self, cell: CellWrapper, decoding_matrix, norm: bool):
+        norm = self.norm if norm else None
         decoded_cell = {}
-        for k, emb in cell.embeddings.items():
+        for k, emb in cell.get_embeddings(norm).items():
             secondary_tokens = []
             norms = []
             for rep in range(self.max_rep):
@@ -246,7 +255,8 @@ class Decoder:
                 if secondary_token not in secondary_tokens:
                     secondary_tokens.append(secondary_token)
                 norms.append(norm)
-                # subtract the inverse to the current hidden state
+                # Subtract the inverse to the current hidden state
+                # TODO: should we also apply normalization to this state?
                 emb = emb - real_embed
             # TODO: move cleanup somewhere else
             secondary_tokens = [
@@ -258,25 +268,31 @@ class Decoder:
             decoded_cell[k] = secondary_tokens
         return decoded_cell
 
-    def compute_probabilities(self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution):
+    def compute_probabilities(
+        self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution, norm: bool
+    ):
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                self.compute_cell(cell, dm, residual_contribution)
+                self.compute_cell(cell, dm, residual_contribution, norm)
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
 
     # TODO: Horrible
-    def compute_cell(self, cell: CellWrapper, decoding_matrix, residual_contribution: ResidualContribution):
-
+    def compute_cell(
+        self, cell: CellWrapper, decoding_matrix, residual_contribution: ResidualContribution, norm: bool
+    ):
+        norm = self.norm if norm else None
         res = {}
 
         entropy = {}
         argmax =  {}
+        embs = {}
         emb_probs = {}
         for k in cell.embeddings.keys():
-            _, probs, pred_id = cell.get_logits_info(k, decoding_matrix)
+            _, probs, pred_id = cell.get_logits_info(k, decoding_matrix, norm)
+            embs[k] = cell.get_embedding(k, norm)
             emb_probs[k] = probs.float().detach().cpu()
             entropy[k] = -torch.sum(probs * torch.log(probs)).detach().float().cpu()
             argmax[k] = probs[pred_id].detach().float().cpu()
@@ -289,7 +305,7 @@ class Decoder:
                 residual=EmbeddingsType.BLOCK_INPUT,
                 x=EmbeddingsType.POST_ATTENTION,
                 ref=EmbeddingsType.POST_ATTENTION_RESIDUAL,
-                embs=cell.embeddings,
+                embs=embs,
                 emb_probs=emb_probs
             )
         res |= {ProbabilityType.ATT_RES_PERCENT: att_res_percent}
@@ -300,7 +316,7 @@ class Decoder:
                 residual=EmbeddingsType.POST_ATTENTION_RESIDUAL,
                 x=EmbeddingsType.POST_FF,
                 ref=EmbeddingsType.BLOCK_OUTPUT,
-                embs=cell.embeddings,
+                embs=embs,
                 emb_probs=emb_probs
             )
         res |= {ProbabilityType.FFNN_RES_PERCENT: ffnn_res_percent}

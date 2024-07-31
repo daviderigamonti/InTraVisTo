@@ -37,25 +37,30 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     #       argument of cache.memoize
     @cache.memoize(ignore={"layers", "decoder"})
     def decode_layers(
-        *args, layers, strategy: str, decoder: Decoder, _session_id: str
+        *args, layers, strategy: str, norm: bool, decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
-        return decoder.decode(layers, decoding=strategy)
+        return decoder.decode(layers, decoding=strategy, norm=norm)
 
     # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
     #       argument of cache.memoize
     @cache.memoize(ignore={"layers", "decoder"})
     def compute_probabilities(
-        *args, layers, strategy: str, residual_contribution: ResidualContribution, decoder: Decoder, _session_id: str
+        *args, layers, strategy: str, residual_contribution: ResidualContribution,
+        norm: bool, decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in compute_probabilities function {args}")
-        return decoder.compute_probabilities(layers, decoding=strategy, residual_contribution=residual_contribution)
+        return decoder.compute_probabilities(
+            layers, decoding=strategy, residual_contribution=residual_contribution, norm=norm
+        )
 
     @cache.memoize()
     def model_generate(prompt, model_id, run_config, session):
         with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
             model = models[model_id]
         inputs = model.tokenizer(prompt, return_tensors="pt").to(model.info.device)
 
@@ -129,9 +134,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])
         intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
 
-        # TODO: attaching normalized output states to hidden states tensor in place of the last layer states
-        #hidden_states[-1, :, :] = generation_result["output_hidden_state"][0, :, :].detach()
-
         # Append normalized output states to hidden states tensor
         hidden_states = torch.cat(
             (hidden_states, generation_result["output_hidden_state"].detach()), dim=0
@@ -177,16 +179,19 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
     
     @cache.memoize()
-    def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution):
+    def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution, norm):
         with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
             model = models[model_id]
         generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
 
-        text = decode_layers(layers=layers, strategy=strategy, decoder=model.decoder, _session_id=session_id)
+        text = decode_layers(layers=layers, strategy=strategy, norm=norm, decoder=model.decoder, _session_id=session_id)
         p = compute_probabilities(
             layers=layers,
             strategy=strategy,
             residual_contribution=residual_contribution,
+            norm=norm,
             decoder=model.decoder,
             _session_id=session_id,
         )
@@ -200,36 +205,64 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
-        token_diffs = decode_layers(layers=diffs, strategy=strategy, decoder=model.decoder, _session_id=session_id + DASH_SESSION_DIFF_GEN)
+        token_diffs = decode_layers(
+            layers=diffs, strategy=strategy, norm=norm, decoder=model.decoder, 
+            _session_id=session_id + DASH_SESSION_DIFF_GEN
+        )
         token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
         attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
 
+        norm_f = model.decoder.norm if norm else None
         attentions = generated_output["attentions"]
         # TODO: possibly use a map
         kl_diffs_ii = [
-            torch.stack(layers[i].get_kldiff(layers[i-1], EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT), dim=0)
+            torch.stack(layers[i].get_kldiff(
+                layers[i-1],
+                EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT,
+                norm_f,
+            ), dim=0)
             for i in range(1, len(layers)-1)
         ]
         kl_diffs_ai = [
-            torch.stack(layer.get_kldiff(layer, EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION), dim=0)
+            torch.stack(layer.get_kldiff(
+                layer,
+                EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION,
+                norm_f,
+            ), dim=0)
             for layer in layers[1:-1]
         ]
         kl_diffs_io = [
-            torch.stack(layer.get_kldiff(layer, EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL), dim=0)
+            torch.stack(layer.get_kldiff(
+                layer,
+                EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                norm_f,
+            ), dim=0)
             for layer in layers[1:-1]
         ]
         kl_diffs_if = [
-            torch.stack(layer.get_kldiff(layer, EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL), dim=0)
+            torch.stack(layer.get_kldiff(
+                layer,
+                EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                norm_f,
+            ), dim=0)
             for layer in layers[1:-1]
         ]
         kl_diffs_fo = [
-            torch.stack(layer.get_kldiff(layer, EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF), dim=0)
+            torch.stack(layer.get_kldiff(
+                layer,
+                EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF,
+                norm_f,
+            ), dim=0)
             for layer in layers[1:-1]
         ]
         kl_diffs_oo = [None] * (len(layers) - 2) + [
-            torch.stack(layers[-1].get_kldiff(layers[-2], EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT), dim=0)
+            torch.stack(layers[-1].get_kldiff(
+                layers[-2],
+                EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT,
+                norm_f,
+            ), dim=0)
         ]
         # TODO: choose how to pass values (as torch tensors or python lists)
         #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
@@ -314,6 +347,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Input("click_data_store", "data"),
             Input("choose_decoding", "value"),
             Input("choose_res_type", "value"),
+            Input("norm_emb", "value"),
         ],
         [
             State("hide_col", "value"),
@@ -321,43 +355,43 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         prevent_initial_call=True,
     )
-    def update_vis_config(gen_notify, click_data, strategy, res_contrib, hide_col, vis_config):
+    def update_vis_config(_, click_data, strategy, res_contrib, norm, hide_col, vis_config):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
         col_0_offset = 1 if len(hide_col) > 0 else 0
         vis_config |= {"x": click_data["points"][0]["x"] + col_0_offset} if click_data else {"x": None}
         vis_config |= {"y": click_data["points"][0]["y"]} if click_data else {"y": None}
         vis_config |= {"strategy": strategy}
         vis_config |= {"res_contrib": res_contrib}
+        vis_config |= {"norm": len(norm) > 0}
         if ctx.triggered_id == "generation_notify":
             vis_config |= {"x": None, "y": None}
         return vis_config, 
 
 
     @app.callback(
-        Output('sankey_vis_config', 'data'),
+        Output("sankey_vis_config", "data"),
         [
             Input("generation_notify", "data"),
             Input("vis_config", "data"),
-            Input('row_limit', 'value'),
-            Input('hide_0', 'value'),
+            Input("row_limit", "value"),
+            Input("hide_0", "value"),
             Input("att_opacity", "value"),
-            Input("att_high_k", "value"),
+            Input("attention_high_store", "data"),
             Input("hide_labels", "value"),
-            Input('font_size', 'value'),
+            Input("font_size", "value"),
         ],
         [
-            State('hide_col', 'value'),
-            State('sankey_vis_config', 'data'),
+            State("attention_select", "value"),
+            State("sankey_vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
     def update_sankey_vis_config(
-        gen_notify, vis_config, row_limit, hide_0, att_opacity, attention_high_k, hide_labels,
-        font_size, hide_col, sankey_vis_config
+        _, vis_config, row_limit, hide_0, att_opacity, attention_high, hide_labels,
+        font_size, attention_select, sankey_vis_config
     ):
         token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
         layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
-        row_limit = row_limit
         hide_0 = len(hide_0) > 0
         hide_labels = len(hide_labels) > 0
         sankey_vis_config |= {
@@ -367,7 +401,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 rowlimit=row_limit,
                 show_0=not hide_0,
                 attention_opacity=att_opacity,
-                attention_highlight_k=attention_high_k,
+                attention_select=attention_select,
+                attention_highlight=attention_high,
                 only_nodes_labels=hide_labels,
                 font_size=font_size,
             ))
@@ -423,15 +458,21 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             return initial_callbacks, session_id, no_update, no_update, True
         
         with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
             model = models[model_id]
         
         _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
         # Caching values
-        _ = decode_layers(layers=layers, strategy=vis_config["strategy"], decoder=model.decoder, _session_id=session_id)
+        _ = decode_layers(
+            layers=layers, strategy=vis_config["strategy"], norm=vis_config["norm"],
+            decoder=model.decoder, _session_id=session_id
+        )
         _ = compute_probabilities(
             layers=layers,
             strategy=vis_config["strategy"],
             residual_contribution=vis_config["res_contrib"],
+            norm=vis_config["norm"],
             decoder=model.decoder,
             _session_id=session_id,
         )
@@ -462,12 +503,17 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         _, tab_vis_config, vis_config, text, model_id, run_config, session_id
     ):
         with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
             model = models[model_id]
         # Retrieve model outputs
         generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
 
         # Compute secondary tokens
-        text = decode_layers(layers=layers, strategy=vis_config["strategy"], decoder=model.decoder, _session_id=session_id)
+        text = decode_layers(
+            layers=layers, strategy=vis_config["strategy"], norm=vis_config["norm"],
+            decoder=model.decoder, _session_id=session_id
+        )
         text = extract_key_from_processed_layers(text, tab_vis_config["emb_type"])
 
         # Compute probabilities
@@ -475,6 +521,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             layers=layers,
             strategy=vis_config["strategy"],
             residual_contribution=vis_config["res_contrib"],
+            norm=vis_config["norm"],
             decoder=model.decoder,
             _session_id=session_id,
         )
@@ -524,7 +571,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         fig.add_shape(x0=input_len - 1 - 0.5, x1=input_len - 1 - 0.5, y0=-1, y1=0.5, line_width=8, line_color="white")
         fig.add_shape(x0=input_len - 1 - 0.5, x1=input_len - 1 - 0.5, y0=-1, y1=0.5, line_width=2, line_color="darkblue")
         fig.add_shape(
-            x0=input_len - 1 - 1 - 0.5, x1=input_len - 1 - 1 - 0.5, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            x0=input_len - 1 - 1 - 0.5, x1=input_len - 1 - 1 - 0.5,y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
             line_width=8, line_color="white"
         )
         fig.add_shape(
@@ -572,6 +619,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     )
     def update_sankey(vis_config, sankey_vis_config, text, model_id, run_config, session_id):
         with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
             model = models[model_id]
         if (
             "x" not in vis_config or "y" not in vis_config or
@@ -587,7 +636,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
         
         dfs, linkinfo, input_len, output_len = generate_sankey_info(
-            text, model_id, run_config, session_id, vis_config["strategy"], vis_config["res_contrib"]
+            text, model_id, run_config, session_id, vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"]
         )
 
         row_limit = sankey_param.rowlimit
@@ -785,10 +834,36 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     )
     def update_components_new_model(_, model_id, run_config):
         with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
             model = models[model_id]
         run_config |= {"injects": []} 
         return model.model_config.num_hidden_layers, run_config
 
+    @app.callback(
+        [
+            Output("att_high_k_div", "style"),
+            Output("att_high_w_div", "style"),
+            Output("attention_high_store", "data"),
+        ],
+        [
+            Input("attention_select", "value"),
+            Input("att_high_k", "value"),
+            Input("att_high_w", "value"),
+        ],
+    )
+    def update_attention_layout(attention_select, att_high_k, att_high_w):
+        _parameter_order = ["att_high_k", "att_high_w"]
+        if ctx.triggered_id in _parameter_order:
+            value = ctx.triggered[0]["value"] if ctx.triggered[0]["value"] is not None else 0.0
+            styles = [no_update] * len(_parameter_order)
+        else:
+            value = [locals()[v] for k,v in ATTENTION_ID_MAP.items() if k == attention_select][0]
+            styles = [
+                {"display": "flex"} if attention_select == p_key else {"display": "none"}
+                for p in _parameter_order if (p_key := next(k for k, v in ATTENTION_ID_MAP.items() if v == p)) and True
+            ]
+        return *styles, value
 
     # Client-side callbacks
 
