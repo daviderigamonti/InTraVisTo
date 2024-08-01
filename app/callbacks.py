@@ -591,6 +591,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 "title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20},
                 "showgrid": False, "zeroline": False, "range": [-0.5, model.model_config.num_hidden_layers + 1.5]
             },
+            plot_bgcolor="white",
             template="plotly",
             modebar_remove=["zoom", "pan", "zoomIn", "zoomOut", "autoScale"],
             dragmode=False,

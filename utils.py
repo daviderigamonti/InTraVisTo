@@ -3,8 +3,6 @@ from enum import Enum
 
 import re
 
-from scipy.special import rel_entr # (ufuncs in scipy.special are written in C) pylint:disable=E0611
-
 import torch
 
 
@@ -37,10 +35,14 @@ def _res_contrib_norm(residual, x, embs, **kwargs):
         embs[residual].norm(2, dim=-1) / (embs[residual].norm(2, dim=-1) + embs[x].norm(2, dim=-1))
     ).squeeze().detach().float().cpu()
 
-def _res_contrib_kl_div(residual, x, ref, emb_probs, **kwargs):
-    kldiv_res = rel_entr(emb_probs[residual], emb_probs[ref]).sum()
-    kldiv_x = rel_entr(emb_probs[x], emb_probs[ref]).sum()
-    return kldiv_x / (kldiv_res + kldiv_x)
+def _res_contrib_kl_div(residual, x, ref, embs, **kwargs):
+    kldiv_res = torch.nn.functional.kl_div(
+        torch.log_softmax(embs[residual], dim=-1), torch.log_softmax(embs[ref], dim=-1), log_target=True, reduction="sum"
+    )
+    kldiv_x = torch.nn.functional.kl_div(
+        torch.log_softmax(embs[x], dim=-1), torch.log_softmax(embs[ref], dim=-1), log_target=True, reduction="sum"
+    )
+    return (kldiv_x / (kldiv_res + kldiv_x)).detach().float().cpu()
 
 # TODO: make more efficient/general
 def clean_text(t):
@@ -167,10 +169,11 @@ class LayerWrapper:
     def get_kldiff(self, other: Self, emb_type: EmbeddingsType, other_emb_type: EmbeddingsType = None, norm = None):
         other_emb_type = emb_type if other_emb_type is None else other_emb_type
         return [
-            rel_entr(
-                torch.nn.functional.softmax(cell1.get_embedding(emb_type, norm).float().detach().cpu(), dim=-1),
-                torch.nn.functional.softmax(cell2.get_embedding(other_emb_type, norm).float().detach().cpu(), dim=-1),
-            ).sum()
+            torch.nn.functional.kl_div(
+                torch.nn.functional.log_softmax(cell1.get_embedding(emb_type, norm), dim=-1),
+                torch.nn.functional.log_softmax(cell2.get_embedding(other_emb_type, norm), dim=-1),
+                log_target=True, reduction="sum",
+            ).detach().float().cpu()
             for cell1, cell2 in zip(self, other)
         ]
 
@@ -219,40 +222,36 @@ class Decoder:
             ( (n_layers ** 2 - layer_n ** 2) * matrix_in + (layer_n ** 2) * (matrix_out) ) / (n_layers ** 2)
             for layer_n in range(0, n_layers + 1)
         )
-    
+
     def decode(self, layers: List[LayerWrapper], decoding: DecodingType, norm: bool):
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                self.decode_cell(cell, dm, norm)
+                {k: self._iterative_decoding(emb, dm) for k, emb in cell.get_embeddings(norm).items()}
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
 
-    def decode_cell(self, cell: CellWrapper, decoding_matrix, norm: bool):
-        decoded_cell = {}
-        for k, emb in cell.get_embeddings(norm).items():
-            secondary_tokens = []
-            norms = []
-            for rep in range(self.max_rep):
-                logits = torch.matmul(emb, decoding_matrix.T)
-                token_id = logits.argmax()
-                real_embed = decoding_matrix[token_id]
-                secondary_token = self.tokenizer.convert_ids_to_tokens([token_id])[0]
-                norm = torch.norm(emb)
-                # Stop prematurely if norm is too small or if norm is bigger than previous one
-                if norm <= 0.01 or (len(norms) > 0 and norm >= norms[-1]) and rep != 0:
-                    break
-                # Do not add repreated tokens
-                if secondary_token not in secondary_tokens:
-                    secondary_tokens.append(secondary_token)
-                norms.append(norm)
-                # Subtract the inverse to the current hidden state
-                # TODO: should we also apply normalization to this state?
-                emb = emb - real_embed
-            secondary_tokens = [clean_text(s) for s in secondary_tokens]
-            decoded_cell[k] = secondary_tokens
-        return decoded_cell
+    def _iterative_decoding(self, emb, decoding_matrix):
+        secondary_tokens = []
+        norms = []
+        for rep in range(self.max_rep):
+            logits = torch.matmul(emb, decoding_matrix.T)
+            token_id = logits.argmax()
+            real_embed = decoding_matrix[token_id]
+            secondary_token = self.tokenizer.convert_ids_to_tokens([token_id])[0]
+            norm = torch.norm(emb)
+            # Stop prematurely if norm is too small or if norm is bigger than previous one
+            if norm <= 0.01 or (len(norms) > 0 and norm >= norms[-1]) and rep != 0:
+                break
+            # Do not add repreated tokens
+            if secondary_token not in secondary_tokens:
+                secondary_tokens.append(secondary_token)
+            norms.append(norm)
+            # Subtract the inverse to the current hidden state
+            # TODO: should we also apply normalization to this state?
+            emb = emb - real_embed
+        return [clean_text(s) for s in secondary_tokens]
 
     def compute_probabilities(
         self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution, norm: bool
@@ -274,13 +273,11 @@ class Decoder:
         entropy = {}
         argmax =  {}
         embs = {}
-        emb_probs = {}
         for k in cell.embeddings.keys():
             _, probs, pred_id = cell.get_logits_info(k, decoding_matrix, norm)
             embs[k] = cell.get_embedding(k, norm)
-            emb_probs[k] = probs.float().detach().cpu()
-            entropy[k] = -torch.sum(probs * torch.log(probs)).detach().float().cpu()
-            argmax[k] = probs[pred_id].detach().float().cpu()
+            entropy[k] = -torch.sum(probs * torch.log(probs)).detach().cpu()
+            argmax[k] = probs[pred_id].detach().cpu()
 
         res[ProbabilityType.ENTROPY] = entropy
         res[ProbabilityType.ARGMAX] = argmax
@@ -291,7 +288,6 @@ class Decoder:
                 x=EmbeddingsType.POST_ATTENTION,
                 ref=EmbeddingsType.POST_ATTENTION_RESIDUAL,
                 embs=embs,
-                emb_probs=emb_probs
             )
         res |= {ProbabilityType.ATT_RES_PERCENT: att_res_percent}
 
@@ -302,7 +298,6 @@ class Decoder:
                 x=EmbeddingsType.POST_FF,
                 ref=EmbeddingsType.BLOCK_OUTPUT,
                 embs=embs,
-                emb_probs=emb_probs
             )
         res |= {ProbabilityType.FFNN_RES_PERCENT: ffnn_res_percent}
         return res

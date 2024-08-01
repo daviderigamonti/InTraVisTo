@@ -28,7 +28,7 @@ DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},
     "yaxis": {"visible": False},
     "width": 1000, "height": 500,
-    "paper_bgcolor": "white",
+    "plot_bgcolor": "white"
 })
 
 DEFAULT_FONT_SIZE = 12

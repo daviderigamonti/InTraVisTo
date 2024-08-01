@@ -363,7 +363,15 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         if typ not in ["att_in"] else None
         for typ, el in zip(types, un)
     ]
-    def format_kl(x): return "KL: {:.0f}m nats".format(x * 1000) if x >= 10 else "KL: {:.0f}μ nats".format(x * 1000 * 1000)
+
+    def format_kl(x):                                                                                                                                                                                   
+        i = 0
+        udm = ["", "m", "μ", "n", "p"]
+        while x < 0.1 and i < len(udm) - 1:
+            x *= 1000
+            i += 1
+        return f"KL: {x:.0f}{udm[i]} nats"
+
     links_extra = [
         l | {"kl_diff": format_kl(kl) if kl is not None else ""}
         for l, kl in zip(links_extra, kl_values)
@@ -450,7 +458,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
     revmap_y = [
         # Shift attention/ffnn nodes closer to their reference nodes
-        columns_ys[y] + columns_width[y] / 2 if y == math.ceil(y) else columns_ys[y] + columns_width[y] 
+        columns_ys[y] + columns_width[y] / 2
         for y, v in zip(revmap_y, revmap_values)
     ]
 
