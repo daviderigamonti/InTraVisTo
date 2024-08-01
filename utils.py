@@ -223,16 +223,16 @@ class Decoder:
             for layer_n in range(0, n_layers + 1)
         )
 
-    def decode(self, layers: List[LayerWrapper], decoding: DecodingType, norm: bool):
+    def decode(self, layers: List[LayerWrapper], decoding: DecodingType, norm):
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                {k: self._iterative_decoding(emb, dm) for k, emb in cell.get_embeddings(norm).items()}
+                {k: self._iterative_decoding(emb, dm, norm) for k, emb in cell.get_embeddings(norm).items()}
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
 
-    def _iterative_decoding(self, emb, decoding_matrix):
+    def _iterative_decoding(self, emb, decoding_matrix, normalization):
         secondary_tokens = []
         norms = []
         for rep in range(self.max_rep):
@@ -250,7 +250,7 @@ class Decoder:
             norms.append(norm)
             # Subtract the inverse to the current hidden state
             # TODO: should we also apply normalization to this state?
-            emb = emb - real_embed
+            emb = normalization(emb - normalization(real_embed))
         return [clean_text(s) for s in secondary_tokens]
 
     def compute_probabilities(
