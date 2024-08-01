@@ -2,7 +2,8 @@ import dataclasses
 
 import plotly.graph_objects as go
 
-from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, ModelInfo
+from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+from models import ModelInfo, NormalizationStep
 from sankey import SankeyParameters, AttentionHighlight
 from app.constants import *  # pylint:disable=W0401,W0614
 
@@ -11,7 +12,7 @@ DEFAULT_EMB_TYPE = EmbeddingsType.BLOCK_OUTPUT
 DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
-DEFAULT_NORM = True
+DEFAULT_NORM = NormalizationStep.NORM_SCALE
 
 DEFAULT_ATTENTION = AttentionHighlight.TOP_K
 DEFAULT_ATT_HIGH_K = 1
@@ -26,7 +27,7 @@ DEFAULT_INITIAL_CALLS = ["update_model", "call_model_generate"]
 DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},
     "yaxis": {"visible": False},
-    "width": 1900, "height": 1000,
+    "width": 1000, "height": 500,
 })
 
 DEFAULT_FONT_SIZE = 12

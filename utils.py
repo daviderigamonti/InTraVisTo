@@ -1,20 +1,12 @@
-from dataclasses import dataclass, field
 from typing import List, Self
 from enum import Enum
 
-import time
 import re
-import gc
 
-from torch.cuda import OutOfMemoryError
-from torch import bfloat16
-from transformers import AutoTokenizer
 from scipy.special import rel_entr # (ufuncs in scipy.special are written in C) pylint:disable=E0611
 
-import transformers
 import torch
 
-from transformer_wrappers.wrappers import InjectCausalLMWrapper# pylint:disable=E0401,E0611
 
 class EmbeddingsType(str, Enum):
     BLOCK_OUTPUT = "block_output"
@@ -39,6 +31,7 @@ class ResidualContribution(str, Enum):
     NORM = "norm"
     KL_DIV = "kl_divergence"
 
+
 def _res_contrib_norm(residual, x, embs, **kwargs):
     return (
         embs[residual].norm(2, dim=-1) / (embs[residual].norm(2, dim=-1) + embs[x].norm(2, dim=-1))
@@ -48,6 +41,11 @@ def _res_contrib_kl_div(residual, x, ref, emb_probs, **kwargs):
     kldiv_res = rel_entr(emb_probs[residual], emb_probs[ref]).sum()
     kldiv_x = rel_entr(emb_probs[x], emb_probs[ref]).sum()
     return kldiv_x / (kldiv_res + kldiv_x)
+
+# TODO: make more efficient/general
+def clean_text(t):
+    return repr( chr(int(t[3:-1], 16)) if re.match(r"<0x\w\w>", t) else t )[1:-1].replace("\u0120", "_").replace("\u010a", "\\n")
+
 
 DEFAULT_SESSION_ID = "0"
 RESIDUAL_CONTRIBUTION = {
@@ -168,10 +166,6 @@ class LayerWrapper:
     # TODO: maybe inefficient?
     def get_kldiff(self, other: Self, emb_type: EmbeddingsType, other_emb_type: EmbeddingsType = None, norm = None):
         other_emb_type = emb_type if other_emb_type is None else other_emb_type
-        # TODO: is weighting by norm mean still needed? 
-        # / (
-        #     (cell1.get_embedding(emb_type).norm() + cell2.get_embedding(other_emb_type).norm()) / 2
-        # ).float().detach().cpu()
         return [
             rel_entr(
                 torch.nn.functional.softmax(cell1.get_embedding(emb_type, norm).float().detach().cpu(), dim=-1),
@@ -195,7 +189,6 @@ class LayerWrapper:
 class Decoder:
     def __init__(self, model, tokenizer, model_config, max_rep=5):
         self.tokenizer = tokenizer
-        self.norm = model.base_model.model.norm
         self.output_embedding = model.lm_head
         self.input_embedding = model.get_input_embeddings()
         self.max_rep = max_rep
@@ -237,7 +230,6 @@ class Decoder:
         ]
 
     def decode_cell(self, cell: CellWrapper, decoding_matrix, norm: bool):
-        norm = self.norm if norm else None
         decoded_cell = {}
         for k, emb in cell.get_embeddings(norm).items():
             secondary_tokens = []
@@ -258,13 +250,7 @@ class Decoder:
                 # Subtract the inverse to the current hidden state
                 # TODO: should we also apply normalization to this state?
                 emb = emb - real_embed
-            # TODO: move cleanup somewhere else
-            secondary_tokens = [
-                repr( chr(int(s[3:-1], 16)) if re.match(r"<0x\w\w>", s) else s )[1:-1]
-                    .replace("\u0120", "_") # Replace Ġ
-                    .replace("\u010a", "\\n") # Replace Ċ
-                for s in secondary_tokens
-            ]
+            secondary_tokens = [clean_text(s) for s in secondary_tokens]
             decoded_cell[k] = secondary_tokens
         return decoded_cell
 
@@ -283,7 +269,6 @@ class Decoder:
     def compute_cell(
         self, cell: CellWrapper, decoding_matrix, residual_contribution: ResidualContribution, norm: bool
     ):
-        norm = self.norm if norm else None
         res = {}
 
         entropy = {}
@@ -321,80 +306,3 @@ class Decoder:
             )
         res |= {ProbabilityType.FFNN_RES_PERCENT: ffnn_res_percent}
         return res
-
-@dataclass(eq=True, frozen=True)
-class ModelInfo:
-    id: str = field(default="", compare=True)
-    device: str = field(default="cpu", compare=True)
-    quantized: bool = field(default=False, compare=True)
-
-class ModelUtils:
-    def __init__(self, info,  hf_token=None):
-        self.info = info
-        self.tokenizer, self.model, self.model_config, self.decoder, self.prefix_tokens = self._load_model(
-            info.id, info.device, info.quantized, hf_token
-        )
-        self.heartbeat_stamp = time.time()
-
-    def _load_model(self, model_id, device, quant, hf_token, tries=4, try_timeout=5):
-        
-        quant_config = transformers.BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=bfloat16,
-        ) if quant else None
-        model_config = transformers.AutoConfig.from_pretrained(
-            model_id,
-            output_attentions=True,
-            output_hidden_states=True,
-            output_scores=True,
-            token=hf_token,
-        )
-
-        tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
-
-        # TODO: find a solution for this
-        # Compute prefix tokens (9 is a random number)
-        prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).flatten()
-        prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
-
-        MODEL_CONFIG = {
-            "trust_remote_code": True,
-            "device_map": device,
-            "token": hf_token,
-            "torch_dtype": bfloat16,
-        }
-
-        TOKENIZER_CONFIG = {
-            "token": hf_token,
-        }
-
-        model = None
-        while True:
-            try:
-                model = InjectCausalLMWrapper.from_pretrained(
-                    model_id, model_kwargs=MODEL_CONFIG,
-                    quantization_configs=quant_config,
-                    tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
-                )
-                model.enable_wrapper()
-                break
-            except OutOfMemoryError:
-
-                del model
-                model = None
-                gc.collect()
-                # TODO: add check for device
-                torch.cuda.empty_cache()
-
-                tries -= 1
-                if tries <= 0:
-                    print(f"Could not load {model_id}")
-                    return None, None, None, None, None
-                print(f"Out of Memory while loading {model_id}, {tries} attempt(s) left, next attempt in {try_timeout} seconds")
-                
-                time.sleep(try_timeout)
-
-        decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
-        return tokenizer, model, model_config, decoder, prefix_tokens

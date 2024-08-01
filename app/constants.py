@@ -1,7 +1,8 @@
 import dataclasses
 import json
 
-from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, ModelInfo
+from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+from models import ModelInfo, NormalizationStep
 from sankey import AttentionHighlight
 
 
@@ -58,6 +59,12 @@ ATTENTION_MAP = [
     {"label": "Top K attention weights", "value": AttentionHighlight.TOP_K},
     {"label": "Exclude low-value weights", "value": AttentionHighlight.MIN_WEIGHT},
     #{"label": "", "value": AttentionHighlight.TOP_P},
+]
+
+NORM_MAP = [
+    {"label": "No normalization", "value": NormalizationStep.NONE},
+    {"label": "Normalization only", "value": NormalizationStep.ONLY_NORM},
+    {"label": "Normalization with rescaling parameters", "value": NormalizationStep.NORM_SCALE},
 ]
      
 MODEL_MAP = [

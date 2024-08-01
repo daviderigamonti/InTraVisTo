@@ -284,8 +284,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         lab = [np.squeeze(l[0]) if t in ["Node"] else np.squeeze(l) for l, t in zip(lab, typemap)]
 
     # Generate numbered labels
-    lab = [f"{k[1]} {lab[el['id']]}" if sankey_parameters.print_indexes and el["type"]
-           in ["Node"] else lab[el['id']] for k, el in elmap.items()]
+    lab = [f"{k[1]} {lab[el["id"]]}" if sankey_parameters.print_indexes and el["type"]
+           in ["Node"] else lab[el["id"]] for k, el in elmap.items()]
 
     # Remove extra labels not belonging to nodes
     if sankey_parameters.only_nodes_labels:

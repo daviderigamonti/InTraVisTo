@@ -73,7 +73,7 @@ def _generation():
             dbc.Col([
                 dcc.Input(
                     placeholder=DEFAULT_QUESTION,
-                    type='text',
+                    type="text",
                     value=DEFAULT_QUESTION,
                     id="text",
                     debounce=False,  # Needed otherwise textbox gets reset every time a callback resolves
@@ -105,19 +105,19 @@ def _modes():
         dbc.Row([
             dbc.Col([
                 html.H5("Decoder used"),
-                dbc.RadioItems(options=DECODING_TYPE_MAP, value=DEFAULT_DECODING, id='choose_decoding')
+                dbc.RadioItems(options=DECODING_TYPE_MAP, value=DEFAULT_DECODING, id="choose_decoding")
             ]),
             dbc.Col([
                 html.H5("Embedding shown"),
-                dbc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id='choose_embedding')
+                dbc.RadioItems(options=EMB_TYPE_MAP, value=DEFAULT_EMB_TYPE, id="choose_embedding")
             ]),
             dbc.Col([
                 html.H5("Colour"),
-                dbc.RadioItems(options=PROB_TYPE_MAP, value=DEFAULT_PROB_TYPE, id='choose_colour')
+                dbc.RadioItems(options=PROB_TYPE_MAP, value=DEFAULT_PROB_TYPE, id="choose_colour")
             ]),
             dbc.Col([
                 html.H5("Residual contribution"),
-                dbc.RadioItems(options=RES_TYPE_MAP, value=DEFAULT_RES_TYPE, id='choose_res_type')
+                dbc.RadioItems(options=RES_TYPE_MAP, value=DEFAULT_RES_TYPE, id="choose_res_type")
             ]),
         ])
     ])])
@@ -158,47 +158,46 @@ def _settings():
                 ], className="my-1 d-flex align-items-center"),
                 dbc.Row([
                     dbc.Input(
-                        id="max_new_tokens", type='number', value=DEFAULT_RUN_CONFIG["max_new_tok"], min=0, max=1024,
+                        id="max_new_tokens", type="number", value=DEFAULT_RUN_CONFIG["max_new_tok"], min=0, max=1024,
                         className="w-25",
                     ),
                     html.Label("N° of generated tokens ", className="w-75"),
                 ], className="mx-2 my-1 d-flex align-items-center"),
                 dbc.Row([
                     dbc.Input(
-                        id="font_size", type='number', value=DEFAULT_FONT_SIZE, min=1, max=72,
+                        id="font_size", type="number", value=DEFAULT_FONT_SIZE, min=1, max=72,
                         className="w-25",
                     ),
                     html.Label("Font size", className="w-75"),
                 ], className="mx-2 my-1 d-flex align-items-center"),
                 dbc.Row([
-                    dbc.Checklist(
-                        [{"label": "Use normalized embeddings", "value": "norm"}],
-                        id="norm_emb",
-                        value=["norm"] if DEFAULT_NORM else [],
-                        labelStyle={"float": "left"},
-                        switch=True,
-                    ),
-                ], className="my-2 mx-2 my-1 d-flex align-items-center"),
-            ]),
-            dbc.Col([
-                dbc.Row([
-                    html.H5("Heatmap")
-                ]),
+                    dbc.Col(["Embedding normalization:"], className="col-md-auto"),
+                    dbc.Col([
+                        dbc.Select(
+                            id="norm_emb",
+                            options=NORM_MAP,
+                            value=DEFAULT_VIS_CONFIG["norm"],
+                            className="form-select borderpx-1 w-100"
+                        ),
+                    ]),
+                ], className="my-2 mx-1 my-1 d-flex align-items-center"),
                 dbc.Row([
                     dbc.Checklist(
-                        [{"label": "Hide starting token", "value": "hide"}],
+                        [{"label": "Hide <start> token", "value": "hide"}],
                         id="hide_start_table",
                         value=["hide"] if DEFAULT_TABLE_VIS_CONFIG["hide_start"] else [],
                         labelStyle={"float": "left"},
                         switch=True,
                     ),
                 ], className="my-1"),
+            ]),
+            dbc.Col([
                 dbc.Row([
                     html.H5("Sankey")
                 ]),
                 dbc.Row([
                     dbc.Checklist(
-                        [{"label": "Hide starting token", "value": "hide"}],
+                        [{"label": "Hide <start> token", "value": "hide"}],
                         id="hide_start_sankey",
                         value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["hide_start"] else [],
                         labelStyle={"float": "left"},
@@ -216,7 +215,7 @@ def _settings():
                 ], className="my-1"),
                 dbc.Row([
                     dbc.Checklist(
-                        [{"label": "Hide token for intermediate nodes", "value": "hide"}],
+                        [{"label": "Hide labels for intermediate nodes", "value": "hide"}],
                         id="hide_labels",
                         value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["only_nodes_labels"] else [],
                         labelStyle={"float": "left"},
@@ -250,7 +249,7 @@ def _settings():
                 ], className="mx-2 my-2 align-items-center", id="att_high_w_div"),
                 dbc.Row([
                     dbc.Input(
-                        id="row_limit", type='number', value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["rowlimit"],
+                        id="row_limit", type="number", value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["rowlimit"],
                         min=1, max=1,
                         className="w-20",
                     ),

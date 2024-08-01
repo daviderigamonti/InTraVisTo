@@ -15,14 +15,15 @@ import torch
 import plotly.graph_objects as go
 import pandas as pd
 
+from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
+
 # TODO: put these values inside classes
 from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
-from utils import ModelUtils, EmbeddingsType, ProbabilityType, ResidualContribution, CellWrapper, LayerWrapper, Decoder
+from utils import EmbeddingsType, ProbabilityType, ResidualContribution, CellWrapper, LayerWrapper, Decoder, clean_text
+from models import MODEL_COMPATIBILITY_MAP, ModelUtils, ModelCompatibilityInfo, LayerNormalizationWrapper
 from app import extra_layout
 from app.constants import * # pylint:disable=W0401,W0614
 from app.defaults import * # pylint:disable=W0401,W0614
-
-from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
 
 def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
@@ -35,9 +36,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     # TODO: eventually put strategy as enum
     # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
     #       argument of cache.memoize
-    @cache.memoize(ignore={"layers", "decoder"})
+    @cache.memoize(ignore={"layers", "decoder", "norm"})
     def decode_layers(
-        *args, layers, strategy: str, norm: bool, decoder: Decoder, _session_id: str
+        *args, layers, strategy: str, norm, norm_id, decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
@@ -45,10 +46,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
     # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
     #       argument of cache.memoize
-    @cache.memoize(ignore={"layers", "decoder"})
+    @cache.memoize(ignore={"layers", "decoder", "norm"})
     def compute_probabilities(
         *args, layers, strategy: str, residual_contribution: ResidualContribution,
-        norm: bool, decoder: Decoder, _session_id: str
+        norm, norm_id, decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in compute_probabilities function {args}")
@@ -116,11 +117,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         generation_result = model.model.generate(inputs.input_ids, **wrapper_gen_config)
 
+        output_tokens = model.tokenizer.convert_ids_to_tokens(generation_result["output_ids"].squeeze())
+
         def standardize_wrapped_tensors(t):
             s = torch.stack(t, dim=0).squeeze().detach()
             return s
 
-        output_len = generation_result["sequence_length"] - input_len
         generation_output = {
             "sequences": generation_result["output_ids"].squeeze(),
             "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)[:,:-1,:-1]
@@ -175,23 +177,26 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             per_token_layers.cells.append(layer)
         layers.append(per_token_layers)
 
-        return generation_output, layers, input_len, output_len, session
+        return generation_output, layers, [clean_text(t) for t in output_tokens[:input_len]], [clean_text(t) for t in output_tokens[input_len:]], session
 
     
     @cache.memoize()
-    def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution, norm):
+    def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution, norm_id):
         with models_lock:
             if model_id not in models:
                 raise PreventUpdate
             model = models[model_id]
-        generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
+        generated_output, layers, input_tok, output_tok, session_id = model_generate(text, model_id, run_config, session_id)
 
-        text = decode_layers(layers=layers, strategy=strategy, norm=norm, decoder=model.decoder, _session_id=session_id)
+        norm = get_normalization(model_id, norm_id)
+
+        text = decode_layers(layers=layers, strategy=strategy, norm=norm, norm_id=norm_id, decoder=model.decoder, _session_id=session_id)
         p = compute_probabilities(
             layers=layers,
             strategy=strategy,
             residual_contribution=residual_contribution,
             norm=norm,
+            norm_id=norm_id,
             decoder=model.decoder,
             _session_id=session_id,
         )
@@ -206,7 +211,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
         token_diffs = decode_layers(
-            layers=diffs, strategy=strategy, norm=norm, decoder=model.decoder, 
+            layers=diffs, strategy=strategy, norm=norm, norm_id=norm_id, decoder=model.decoder,
             _session_id=session_id + DASH_SESSION_DIFF_GEN
         )
         token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
@@ -214,14 +219,13 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
 
-        norm_f = model.decoder.norm if norm else None
         attentions = generated_output["attentions"]
         # TODO: possibly use a map
         kl_diffs_ii = [
             torch.stack(layers[i].get_kldiff(
                 layers[i-1],
                 EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT,
-                norm_f,
+                norm,
             ), dim=0)
             for i in range(1, len(layers)-1)
         ]
@@ -229,7 +233,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             torch.stack(layer.get_kldiff(
                 layer,
                 EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION,
-                norm_f,
+                norm,
             ), dim=0)
             for layer in layers[1:-1]
         ]
@@ -237,7 +241,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             torch.stack(layer.get_kldiff(
                 layer,
                 EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL,
-                norm_f,
+                norm,
             ), dim=0)
             for layer in layers[1:-1]
         ]
@@ -245,7 +249,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             torch.stack(layer.get_kldiff(
                 layer,
                 EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL,
-                norm_f,
+                norm,
             ), dim=0)
             for layer in layers[1:-1]
         ]
@@ -253,7 +257,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             torch.stack(layer.get_kldiff(
                 layer,
                 EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF,
-                norm_f,
+                norm,
             ), dim=0)
             for layer in layers[1:-1]
         ]
@@ -261,7 +265,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             torch.stack(layers[-1].get_kldiff(
                 layers[-2],
                 EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT,
-                norm_f,
+                norm,
             ), dim=0)
         ]
         # TODO: choose how to pass values (as torch tensors or python lists)
@@ -274,8 +278,23 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "kl_diff_out-out": kl_diffs_oo,
         }
 
-        return dfs, linkinfo, input_len, output_len
+        return dfs, linkinfo, len(input_tok), len(output_tok)
 
+    # TODO: should be memoized but some normalization modules don't like it
+    def get_normalization(
+        model_id: str, norm: NormalizationStep
+    ):
+        with models_lock:
+            if model_id not in models:
+                raise PreventUpdate
+            model = models[model_id]
+        compat = MODEL_COMPATIBILITY_MAP[model_id]
+        m = model.model
+        for step in compat[ModelCompatibilityInfo.NORM_PATH]:
+            m = getattr(m, step)
+        return LayerNormalizationWrapper(
+            norm=m, rescale_info=compat[ModelCompatibilityInfo.NORM_DATA], status=norm
+        )
 
     @app.callback(
         Output("initial_callbacks", "data"),
@@ -339,9 +358,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         return run_config, card_id
 
     @app.callback(
-        [
-            Output("vis_config", "data"),
-        ],
+        Output("vis_config", "data"),
         [
             Input("generation_notify", "data"),
             Input("click_data_store", "data"),
@@ -362,10 +379,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         vis_config |= {"y": click_data["points"][0]["y"]} if click_data else {"y": None}
         vis_config |= {"strategy": strategy}
         vis_config |= {"res_contrib": res_contrib}
-        vis_config |= {"norm": len(norm) > 0}
+        vis_config |= {"norm": norm}
         if ctx.triggered_id == "generation_notify":
             vis_config |= {"x": None, "y": None}
-        return vis_config, 
+        return vis_config
 
     @app.callback(
         Output("sankey_vis_config", "data"),
@@ -433,8 +450,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     @app.callback(
         [
             Output("initial_callbacks", "data", allow_duplicate=True),
-            Output('session_id', 'data'),
-            Output('current_run_config', 'data'),
+            Output("session_id", "data"),
+            Output("current_run_config", "data"),
             Output("generation_notify", "data"),
             Output("generate_button_load", "notify"),
         ],
@@ -456,23 +473,24 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         if not model_id:
             return initial_callbacks, session_id, no_update, no_update, True
-        
+
         with models_lock:
             if model_id not in models:
                 raise PreventUpdate
             model = models[model_id]
-        
+
         _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
         # Caching values
+        norm = get_normalization(model_id=model_id, norm=vis_config["norm"])
         _ = decode_layers(
-            layers=layers, strategy=vis_config["strategy"], norm=vis_config["norm"],
+            layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
             decoder=model.decoder, _session_id=session_id
         )
         _ = compute_probabilities(
             layers=layers,
             strategy=vis_config["strategy"],
             residual_contribution=vis_config["res_contrib"],
-            norm=vis_config["norm"],
+            norm=norm, norm_id=vis_config["norm"],
             decoder=model.decoder,
             _session_id=session_id,
         )
@@ -483,11 +501,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
     @app.callback(
         [
-            Output('main_graph', 'figure'),
-            Output('output_text', 'value'),
+            Output("main_graph", "figure"),
+            Output("output_text", "value"),
         ],
         [
-            Input('generation_notify', 'data'),
+            Input("generation_notify", "data"),
             Input("table_vis_config", "data"),
             Input("vis_config", "data")
         ],
@@ -506,12 +524,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             if model_id not in models:
                 raise PreventUpdate
             model = models[model_id]
+
+        norm = get_normalization(model_id, vis_config["norm"])
+
         # Retrieve model outputs
-        generated_output, layers, input_len, output_len, session_id = model_generate(text, model_id, run_config, session_id)
+        generated_output, layers, input_tok, output_tok, session_id = model_generate(text, model_id, run_config, session_id)
 
         # Compute secondary tokens
         text = decode_layers(
-            layers=layers, strategy=vis_config["strategy"], norm=vis_config["norm"],
+            layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
             decoder=model.decoder, _session_id=session_id
         )
         text = extract_key_from_processed_layers(text, tab_vis_config["emb_type"])
@@ -521,7 +542,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             layers=layers,
             strategy=vis_config["strategy"],
             residual_contribution=vis_config["res_contrib"],
-            norm=vis_config["norm"],
+            norm=norm, norm_id=vis_config["norm"],
             decoder=model.decoder,
             _session_id=session_id,
         )
@@ -534,6 +555,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             p = [layer[1:] for layer in p]
 
         offset = 0 if tab_vis_config["hide_start"] else 1
+        input_len = len(input_tok)
+        output_len = len(output_tok)
 
         fig = go.Figure(data=go.Heatmap(
             z=p,
@@ -552,13 +575,13 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             colorscale="blues",
         ))
         fig.update_layout(
-            margin={"l": 5, "r": 5, "t": 5, "b": 5},
+            margin={"l": 50, "r": 10, "t": 40, "b": 40},
             height=(model.model_config.num_hidden_layers + 2) * TABLE_HEIGHT_INCREMENT,
             width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
             xaxis={
-                "title_text": "Token Position", "tickmode": "linear", "titlefont": {"size": 20}, 
-                "showgrid": False, "zeroline": False,
-                },
+                "title_text": "", "tickmode": "linear", "titlefont": {"size": 20}, 
+                "showgrid": False, "zeroline": False, "range": [-0.5, input_len + output_len - 2 + offset - 0.5]
+            },
             yaxis={
                 "title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20},
                 "showgrid": False, "zeroline": False, "range": [-0.5, model.model_config.num_hidden_layers + 1.5]
@@ -568,21 +591,55 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             dragmode=False,
         )
 
-        fig.add_shape(x0=input_len - 1 - 0.5, x1=input_len - 1 - 0.5, y0=-1, y1=0.5, line_width=8, line_color="white")
-        fig.add_shape(x0=input_len - 1 - 0.5, x1=input_len - 1 - 0.5, y0=-1, y1=0.5, line_width=2, line_color="darkblue")
         fig.add_shape(
-            x0=input_len - 1 - 1 - 0.5, x1=input_len - 1 - 1 - 0.5,y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            x0=input_len - 1.5 + offset, x1=input_len - 1.5 + offset, y0=-1, y1=0.5, line_width=8, line_color="white"
+        )
+        fig.add_shape(
+            x0=input_len - 1.5 + offset, x1=input_len - 1.5 + offset, y0=-1, y1=0.5, line_width=2, line_color="#9C84D4"
+        )
+        fig.add_shape(
+            x0=input_len - 2.5 + offset, x1=input_len - 2.5 + offset, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
             line_width=8, line_color="white"
         )
         fig.add_shape(
-            x0=input_len - 1 - 1 - 0.5, x1=input_len - 1 - 1 - 0.5, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
-            line_width=2, line_color="darkblue"
+            x0=input_len - 2.5 + offset, x1=input_len - 2.5 + offset, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            line_width=2, line_color="#9C84D4"
         )
 
-        fig.add_hline(y=0.5, line_width=8, line_color='white')
-        fig.add_hline(y=0.5, line_width=2, line_color='darkblue')
-        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color='white')
-        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color='darkblue')
+        fig.add_hline(y=0.5, line_width=8, line_color="white")
+        fig.add_hline(y=0.5, line_width=2, line_color="#9C84D4")
+        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color="white")
+        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color="#9C84D4")
+
+        # Input/Output annotations
+        for i, tok in enumerate(input_tok[1 - offset:]):
+            fig.add_annotation(
+                x=i, y=model.model_config.num_hidden_layers + 1.5, yshift=10, xshift=-TABLE_WIDTH_INCREMENT,
+                xref="x", yref="y", yanchor="bottom",
+                text=f"{tok}", hovertext=f"{tok}",
+                bgcolor="#94CCF9", bordercolor="black", opacity=0.7,
+                showarrow=False,
+            )
+            fig.add_annotation(
+                x=i, y=-0.5, yshift=-20,
+                xref="x", yref="y", yanchor="top",
+                text=f"{tok}", hovertext=f"{tok}",
+                bgcolor="#94CCF9", bordercolor="black", opacity=0.7,
+                showarrow=False,
+            )
+        for i, tok in enumerate(output_tok):
+            shift = 0
+            if i >= output_len - 1:
+                index = i
+                i = output_len - 2
+                shift = (index + 2 - output_len) * TABLE_WIDTH_INCREMENT
+            fig.add_annotation(
+                x=input_len + i - 1 + offset, y=-0.5, yshift=-20, xshift=shift,
+                xref="x", yref="y", yanchor="top",
+                text=f"{tok}", hovertext=f"{tok}",
+                bgcolor="#FEE69A", bordercolor="black", opacity=0.7,
+                showarrow=False,
+            )
 
         # Injects reminders
         for inj in run_config["injects"]:
@@ -604,10 +661,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         return fig, model.tokenizer.decode(generated_output["sequences"].squeeze()[input_len:])
 
     @app.callback(
-        Output('sankey_graph', 'figure'),
+        Output("sankey_graph", "figure"),
         [
             Input("vis_config", "data"),
-            Input('sankey_vis_config', 'data'),
+            Input("sankey_vis_config", "data"),
         ],
         [
             State("text", "value"),
