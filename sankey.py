@@ -18,6 +18,11 @@ class AttentionHighlight(str, Enum):
     TOP_P = "top_p"
     MIN_WEIGHT = "min_weight"
 
+class SizeAdapt(str, Enum):
+    FIXED = "fixed"
+    TOKEN = "token"
+    LAYER = "layer"
+
 
 @dataclass
 class SankeyParameters:
@@ -63,16 +68,16 @@ class SankeyParameters:
     attention_highlight: object = 0
     only_nodes_labels: bool = False
     rescale_factor: int = 3
-    column_pad: float = None
     # Correction to avoid feeding nodes with a coordinate value of 0, which causes problems with Plotly Sankey Diagrams
     sankey_zero: float = 0.000000000000001
     font_size: float = 12  # Text font size
     size: int = 1800  # Size of square canvas
+    size_adapt: SizeAdapt = SizeAdapt.FIXED
 
 
 def cumulative_sankey_traces(
     dfs, linkinfo,            # Dataframes and link info to access labels and node hidden information
-    row, indexes, el_indexes,  # Dataframe is indexed by index and row, while el_index references the index for sankey visualization
+    row, indexes, el_indexes, # Dataframe is indexed by index and row, while el_index references the index for sankey visualization
     bases,                    # Base attention value of parents
     labels,                   # Current set of labels for sankey visualization
     # Reference for duplicate nodes as a dictionary indexed with (row, index) and containing a dictionary composed of
@@ -416,7 +421,6 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     link_colors = build_rgba_from_tuples(link_colors, sankey_parameters.link_opacity)
 
     # Generate columns based on maximum node width for each column to fit nodes into
-    col_pad = sankey_parameters.column_pad
     columns_width = {
         y_index: max((
             v["base"] if y == y_index else 0
@@ -425,14 +429,17 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         # Iterate also considering attention/feedforward blocks as columns, hence starting from -0.5 with a step of 0.5
         for y_index in np.arange(-0.5, max(revmap_y) + 1, 0.5)
     }
-    l = len(columns_width)
+
+    # Infer optimal column padding
     s = sum(columns_width.values())
-    # Infer optimal column padding if not specified
-    if col_pad is None:
-        r = 1 - s
-        col_pad = r / (l - 1) if r > 0 and l > 1 else 0
-    s += col_pad * l
-    columns_width = {key: w/s + col_pad for key, w in columns_width.items()}
+    r = 1 - s
+    l = len(columns_width)
+    if r > 0:
+        for _ in range(2*l):
+            k = min(columns_width, key=columns_width.get)
+            columns_width[k] += r / (2*l)
+    else:
+        columns_width = {key: w/s for key, w in columns_width.items()}
     columns_ys = {}
     tot_w = 0
     for key, w in sorted(columns_width.items()):
@@ -443,14 +450,21 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
     revmap_y = [
         # Shift attention/ffnn nodes closer to their reference nodes
-        columns_ys[y] + v["base"] / 2 if y == math.floor(y) else columns_ys[y] + v["base"] 
+        columns_ys[y] + columns_width[y] / 2 if y == math.ceil(y) else columns_ys[y] + columns_width[y] 
         for y, v in zip(revmap_y, revmap_values)
     ]
+
+    if sankey_parameters.size_adapt == SizeAdapt.LAYER:
+        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 5) * (sankey_parameters.row_index - sankey_parameters.rowlimit)
+    elif sankey_parameters.size_adapt == SizeAdapt.TOKEN:
+        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 20) * l
+    else:
+        size = sankey_parameters.size
 
     fig = go.Figure(
         go.Sankey(
         orientation="v",
-        arrangement="fixed",
+        arrangement="freeform",
         valueformat=".5r",
         node={
             "customdata": nodes_extra,
@@ -473,7 +487,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     ))
     fig.update_layout(
         font_size=sankey_parameters.font_size, font_family="Verdana", font_color="black",
-        width=sankey_parameters.size, height=sankey_parameters.size,
+        width=size, height=size,
         modebar_remove=["select", "lasso"]
     )
     return fig

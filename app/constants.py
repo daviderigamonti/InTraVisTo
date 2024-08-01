@@ -3,7 +3,7 @@ import json
 
 from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
 from models import ModelInfo, NormalizationStep
-from sankey import AttentionHighlight
+from sankey import AttentionHighlight, SizeAdapt
 
 
 def get_label_type_map(type_map, value):
@@ -66,7 +66,13 @@ NORM_MAP = [
     {"label": "Normalization only", "value": NormalizationStep.ONLY_NORM},
     {"label": "Normalization with rescaling parameters", "value": NormalizationStep.NORM_SCALE},
 ]
-     
+
+SANKEY_SIZE_MAP = [
+    {"label": "Fixed scale", "value": SizeAdapt.FIXED},
+    {"label": "Adapt based on tokens", "value": SizeAdapt.TOKEN},
+    {"label": "Adapt based on layers", "value": SizeAdapt.LAYER},
+]
+
 MODEL_MAP = [
     {"label": "No Model", "value": encode_dataclass(ModelInfo())},
     {"label": "GPT-2", "value": encode_dataclass(ModelInfo("gpt2", CUDA_DEVICE, False))},
@@ -86,6 +92,8 @@ TABLE_Z_FORMAT = {
 
 TABLE_HEIGHT_INCREMENT = 32
 TABLE_WIDTH_INCREMENT = 85
+GRAPH_TOOLTIP_OFFSET_X = 11.7
+GRAPH_TOOLTIP_OFFSET_Y = 628.6
 
 HEARTBEAT_INTERVAL = 10 # Seconds
 HEARTBEAT_TIMEOUT = 15 # Seconds

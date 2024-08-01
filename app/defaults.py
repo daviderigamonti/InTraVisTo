@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 
 from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
 from models import ModelInfo, NormalizationStep
-from sankey import SankeyParameters, AttentionHighlight
+from sankey import SankeyParameters, SizeAdapt, AttentionHighlight
 from app.constants import *  # pylint:disable=W0401,W0614
 
 
@@ -28,6 +28,7 @@ DEFAULT_FIGURE = go.Figure(layout={
     "xaxis": {"visible": False},
     "yaxis": {"visible": False},
     "width": 1000, "height": 500,
+    "paper_bgcolor": "white",
 })
 
 DEFAULT_FONT_SIZE = 12
@@ -43,7 +44,8 @@ DEFAULT_SANKEY_VIS_CONFIG = {
     "sankey_parameters": dataclasses.asdict(SankeyParameters(
         rowlimit=7,
         font_size=DEFAULT_FONT_SIZE,
-        only_nodes_labels=True
+        only_nodes_labels=True,
+        size_adapt=SizeAdapt.FIXED,
     )),
 }
 DEFAULT_TABLE_VIS_CONFIG = {
@@ -52,3 +54,5 @@ DEFAULT_TABLE_VIS_CONFIG = {
     "emb_type": DEFAULT_EMB_TYPE,
     "colour": DEFAULT_PROB_TYPE,
 }
+
+DEFAULT_SANKEY_SCALE = 1.0

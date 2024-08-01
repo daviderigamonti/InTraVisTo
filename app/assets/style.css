@@ -1,3 +1,7 @@
+.w-5 {
+    width: 5% !important;
+}
+
 .w-10 {
     width: 10% !important;
 }
@@ -87,6 +91,11 @@
     overflow-x: auto;
 }
 
+.biscrollable-div {
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
 .overlay {
     position: fixed;
     width: 100%;
@@ -121,6 +130,23 @@
 
 .none {
     display: none !important;
+}
+
+@keyframes fadeSlide {
+    0% {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+.fade-slide {
+    animation-name: fadeSlide;
+    animation-duration: 0.5s;
+    animation-direction: alternate;
+
 }
 
 /* !!! Workaround for Sankey diagram un-removable modebar button!!! */

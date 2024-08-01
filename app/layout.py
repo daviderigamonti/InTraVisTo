@@ -13,42 +13,50 @@ def generate_layout():
             dbc.Row([
                 dbc.Col([
                     _generation(),
-                    html.Hr(),
-                    _modes(),
                 ]),
                 dbc.Col([
-                    _settings(),
+                    _injects(),
                 ])
             ]),
             html.Hr(),
             dbc.Row([
-                _injects(),
+                _settings(),
             ]),
             html.Hr(),
-            html.Div(children=[
-                dbc.Spinner(
-                    dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element", config={"displaylogo": False}),
-                    spinner_class_name="spinner-graph", color="primary"
-                ),
-            ], id="scrollable_graph", className="scrollable-div"),
-            html.Hr(),
-            html.Div(children=[
-                dbc.Spinner(
-                    dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element", config={"displaylogo": False}), 
-                    spinner_class_name="spinner-graph", color="primary"
-                ),
-            ], id="scrollable_sankey", className="scrollable-div"),
-            dbc.Tooltip(
-                id="graph_tooltip", target="tooltip_target", is_open=False,
-                flip=False, placement="top", autohide=False, className="dash-tooltip", trigger="legacy",
-            ),
+            dbc.Tabs([
+                dbc.Tab(dbc.Card(dbc.CardBody([
+                    html.Div(children=[
+                        dbc.Spinner(
+                            dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element", config={"displaylogo": False}),
+                            spinner_class_name="spinner-graph", color="primary"
+                        ),
+                    ], id="scrollable_graph", className="scrollable-div"),
+                    dbc.Tooltip(
+                        id="graph_tooltip", target="tooltip_target", is_open=False,
+                        flip=False, placement="top", autohide=False, className="dash-tooltip", trigger="legacy",
+                    ),
+                    html.Div([], id="tooltip_target"),
+                ]), className="mt-3"), label="Heatmap"),
+                dbc.Tab(dbc.Card(dbc.CardBody([
+                    dbc.Row([
+                        _settings_sankey(),
+                    ]),
+                    html.Hr(),
+                    html.Div(children=[
+                        dbc.Spinner(
+                            dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element", config={"displaylogo": False}), 
+                            spinner_class_name="spinner-graph", color="primary"
+                        ),
+                    ], id="scrollable_sankey", className="biscrollable-div"),
+                ]), className="mt-3"), label="Sankey")
+            ]),
             *_stores(),
             dcc.Interval(id="model_heartbeat", interval=HEARTBEAT_INTERVAL * 1000),
         ], className="container-fluid pt-2"),
         html.Div([], id="overlay", className="overlay"),
-        html.Div([], id="tooltip_target"),
+        
         html.Div([], id="javascript_inject", style={"display": "none"}),
-        html.Div(id="scrollable_table_js_store", children=0),
+        html.Div(id="scrollable_table_js_store", children=0, style={"display": "none"}),
     ])
 
 def _navbar():
@@ -170,6 +178,8 @@ def _settings():
                     ),
                     html.Label("Font size", className="w-75"),
                 ], className="mx-2 my-1 d-flex align-items-center"),
+            ], className="col-2"),
+            dbc.Col([
                 dbc.Row([
                     dbc.Col(["Embedding normalization:"], className="col-md-auto"),
                     dbc.Col([
@@ -189,39 +199,48 @@ def _settings():
                         labelStyle={"float": "left"},
                         switch=True,
                     ),
-                ], className="my-1"),
-            ]),
+                ], className="my-1 mx-1"),
+            ], className="col-4"),
             dbc.Col([
+                _modes(),
+            ], className="col-6"),
+        ])
+    ])
+
+def _settings_sankey():
+    return dbc.Col([
+        dbc.Row([
+            html.H5("Sankey")
+        ]),
+        dbc.Row([
+            dbc.Col([
+                dbc.Checklist(
+                    [{"label": "Hide <start> token", "value": "hide"}],
+                    id="hide_start_sankey",
+                    value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["hide_start"] else [],
+                    labelStyle={"float": "left"},
+                    switch=True,
+                ),
                 dbc.Row([
-                    html.H5("Sankey")
-                ]),
-                dbc.Row([
-                    dbc.Checklist(
-                        [{"label": "Hide <start> token", "value": "hide"}],
-                        id="hide_start_sankey",
-                        value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["hide_start"] else [],
-                        labelStyle={"float": "left"},
-                        switch=True,
-                    ),
-                ], className="my-1"),
-                dbc.Row([
+                    html.Div(["⤷"], className="w-5 ms-3 mb-2 pe-0"),
                     dbc.Checklist(
                         [{"label": "Reapport weights to remaining nodes", "value": "reapport"}],
                         id="reapport_start",
                         value=["reapport"] if DEFAULT_SANKEY_VIS_CONFIG["reapport_start"] else [],
                         labelStyle={"float": "left"},
                         switch=True,
+                        className="w-80 ps-0"
                     ),
-                ], className="my-1"),
-                dbc.Row([
-                    dbc.Checklist(
-                        [{"label": "Hide labels for intermediate nodes", "value": "hide"}],
-                        id="hide_labels",
-                        value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["only_nodes_labels"] else [],
-                        labelStyle={"float": "left"},
-                        switch=True,
-                    ),
-                ], className="my-1"),
+                ], className="align-items-center fade-slide", id="reapport_start_div"),
+                dbc.Checklist(
+                    [{"label": "Hide labels for intermediate nodes", "value": "hide"}],
+                    id="hide_labels",
+                    value=["hide"] if DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["only_nodes_labels"] else [],
+                    labelStyle={"float": "left"},
+                    switch=True,
+                ),
+            ]),
+            dbc.Col([
                 dbc.Row([
                     dbc.Col(["Attention Highlight:"], className="col-md-auto"),
                     dbc.Col([
@@ -232,21 +251,27 @@ def _settings():
                             className="form-select borderpx-1 w-100"
                         ),
                     ]),
-                ], className="mx-2 my-2 d-flex align-items-center"),
+                ], className="ms-1 me-2 mt-2 align-items-center"),
                 dbc.Row([
-                    dbc.Input(
-                        value=DEFAULT_ATT_HIGH_K,
-                        type="number", min=0, max=25, id="att_high_k", className="w-20",
-                    ),
-                    html.Label("Top K attention traces", className="w-80"),
-                ], className="mx-2 my-2 align-items-center", id="att_high_k_div"),
-                dbc.Row([
-                    dbc.Input(
-                        value=DEFAULT_ATT_HIGH_W,
-                        type="number", min=0, max=1, step=0.001, id="att_high_w", className="w-20",
-                    ),
-                    html.Label("Minimum attention weight", className="w-80"),
-                ], className="mx-2 my-2 align-items-center", id="att_high_w_div"),
+                    dbc.Row([
+                        html.Div(["⤷"], className="align-items-center w-10 ms-4"),
+                        dbc.Input(
+                            value=DEFAULT_ATT_HIGH_K,
+                            type="number", min=0, max=25, id="att_high_k", className="w-10",
+                        ),
+                        html.Label("Top K attention traces", className="w-50"),
+                    ], className="align-items-center fade-slide", id="att_high_k_div"),
+                    dbc.Row([
+                        html.Div(["⤷"], className="offset-arrow w-10 ms-4"),
+                        dbc.Input(
+                            value=DEFAULT_ATT_HIGH_W,
+                            type="number", min=0, max=1, step=0.001, id="att_high_w", className="w-10",
+                        ),
+                        html.Label("Minimum attention weight", className="w-50"),
+                    ], className="align-items-center fade-slide", id="att_high_w_div"),
+                ], className="ms-1 me-2 my-1"),
+            ]),
+            dbc.Col([
                 dbc.Row([
                     dbc.Input(
                         id="row_limit", type="number", value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["rowlimit"],
@@ -254,9 +279,22 @@ def _settings():
                         className="w-20",
                     ),
                     html.Label("N° of output layers to show", className="w-80"),
+                ], className="mx-2 d-flex align-items-center"),
+                dbc.Row([
+                    html.Label("Sankey scaling options:", className="w-30 px-0"),
+                    dcc.Slider(
+                        0, 1, value=DEFAULT_SANKEY_SCALE,
+                        step=0.01, marks={0: "0%", 1: "100%"}, id="sankey_scale", className="w-30 py-0"
+                    ),
+                    dbc.Select(
+                        id="sankey_size_adapt",
+                        options=SANKEY_SIZE_MAP,
+                        value=DEFAULT_SANKEY_VIS_CONFIG["sankey_parameters"]["size_adapt"],
+                        className="form-select borderpx-1 w-40"
+                    ),
                 ], className="mx-2 my-2 d-flex align-items-center"),
-            ])
-        ])
+            ]),
+        ], className="d-flex align-items-center"),
     ])
 
 def _stores():

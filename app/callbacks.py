@@ -296,6 +296,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             norm=m, rescale_info=compat[ModelCompatibilityInfo.NORM_DATA], status=norm
         )
 
+
+    # Server callbacks
+
     @app.callback(
         Output("initial_callbacks", "data"),
         Input("initial_callbacks", "empty"),
@@ -397,6 +400,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Input("attention_select", "value"),
             Input("hide_labels", "value"),
             Input("font_size", "value"),
+            Input("sankey_size_adapt", "value"),
         ],
         [
             State("sankey_vis_config", "data"),
@@ -405,7 +409,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     )
     def update_sankey_vis_config(
         _, vis_config, row_limit, reapport_start, hide_start, att_high_k, att_high_w, att_select, hide_labels,
-        font_size, sankey_vis_config
+        font_size, size_adapt, sankey_vis_config
     ):
         token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
         layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
@@ -422,6 +426,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 attention_highlight=att_high,
                 only_nodes_labels=hide_labels,
                 font_size=font_size,
+                size_adapt=size_adapt,
             ))
         }
         return sankey_vis_config
@@ -897,8 +902,38 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             if model_id not in models:
                 raise PreventUpdate
             model = models[model_id]
-        run_config |= {"injects": []} 
+        run_config |= {"injects": []}
         return model.model_config.num_hidden_layers, run_config
+
+    
+    # Layout callbacks
+
+    @app.callback(
+        [
+            Output("text", "disabled", allow_duplicate=True),
+            Output("model_select", "disabled", allow_duplicate=True),
+        ],
+        [
+            Input("initial_callbacks", "data"),
+            Input("generate_button", "n_clicks"),
+        ],
+        prevent_initial_call=True,
+    )
+    def generate_start_hooks(*_):
+        return True, True
+
+    @app.callback(
+        [
+            Output("text", "disabled", allow_duplicate=True),
+            Output("model_select", "disabled", allow_duplicate=True),
+        ],
+        [
+            Input("generation_notify", "data"),
+        ],
+        prevent_initial_call=True,
+    )
+    def generate_end_hooks(_):
+        return False, False
 
     #TODO: change into something more standardized
     @app.callback(
@@ -918,6 +953,28 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             for p in _parameter_order if (p_key := next(k for k, v in ATTENTION_ID_MAP.items() if v == p)) and True
         ]
         return styles
+
+    #TODO: change into something more standardized
+    @app.callback(
+        Output("reapport_start_div", "style"),
+        [
+            Input("hide_start_sankey", "value"),
+        ],
+    )
+    def update_sankey_hide_buttons(hide_start_sankey):
+        style = {"display": "flex"} if len(hide_start_sankey) > 0 else {"display": "none"}
+        return style
+
+    #TODO: change into something more standardized
+    @app.callback(
+        Output("sankey_graph", "style"),
+        [
+            Input("sankey_scale", "value"),
+        ],
+    )
+    def update_sankey_scale(scale):
+        return {"transform": f"scale({scale})", "transform-origin": "top left"}
+
 
     # Client-side callbacks
 
