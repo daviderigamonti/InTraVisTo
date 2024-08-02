@@ -39,7 +39,6 @@ app = Dash(
     routes_pathname_prefix="/intravisto/"
 )
 
-# TODO: fix value passed to generate functions
 app.layout = generate_layout()
 
 generate_callbacks(app, cache, models, models_lock, model_loading_lock)

@@ -11,6 +11,17 @@ import plotly.express as px
 import numpy as np
 
 
+LINK_NAME_MAP = {
+    "residual_att": "Residual", "residual_ff": "Residual", "residual_norm": "Normalization",
+    "att_in": "Attention", "att_out": "Attention", 
+    "ff_in": "Residual", "ff_out": "Feed Forward"
+}
+LINK_KL_MAP = {
+    "residual_att": "kl_diff_in-int", "residual_ff": "kl_diff_int-out", "residual_norm": "kl_diff_out-out",
+    "att_out": "kl_diff_att-int",
+    "ff_in": "kl_diff_int-ff", "ff_out": "kl_diff_ff-out"
+}
+
 class AttentionHighlight(str, Enum):
     NONE = "none"
     ALL = "all"
@@ -88,7 +99,7 @@ def cumulative_sankey_traces(
 ):
     new_labels = []
     new_indexes = []
-    new_elmap = elmap.copy()  # TODO: copy necessary?
+    new_elmap = elmap.copy()
 
     under = []
     over = []
@@ -279,9 +290,11 @@ def change_color_brightness(rgb_color, brightness):
 def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: SankeyParameters):
     # Handle multiple labels for tokens with multiple representations
     typemap = [next(v["type"] for k, v in elmap.items() if v["id"] == i) for i in range(len(elmap.keys()))]
-    nodes_extra = [
-        {"text": l, "diff": f"Difference from previous layer: {linkinfo["diff"][k[0]-1][k[1]]}" if t in ["Node"] and k[0] > 0 else ""}
-        for l, t, k in zip(lab, typemap, elmap.keys())
+    nodes_extra = [{
+            "text": l,
+            "diff": f"Decoded difference from previous layer: {''.join(linkinfo["diff"][k[0]-1][k[1]])}"
+            if t in ["Node"] and k[0] > 0 else ""
+        } for l, t, k in zip(lab, typemap, elmap.keys())
     ]
     if sankey_parameters.multirep:
         lab = [l[0] for l, t in zip(lab, typemap)]
@@ -296,20 +309,13 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     if sankey_parameters.only_nodes_labels:
         lab = [l if t in ["Node"] else "" for l, t in zip(lab, typemap)]
 
-    # TODO: move out
-    link_name_map = {
-        "residual_att": "Residual", "residual_ff": "Residual", "residual_norm": "Normalization",
-        "att_in": "Attention", "att_out": "Attention", 
-        "ff_in": "Residual", "ff_out": "Feed Forward"
-    }
     # Add non-rescaled info to links and nodes extra information
     for k, el in elmap.items():
         nodes_extra[el["id"]] = nodes_extra[el["id"]] | {"v": el["base"]}
-    links_extra = [{"v": v, "type": t, "name": link_name_map[t]} for v, t in zip(vl, types)]
+    links_extra = [{"v": v, "type": t, "name": LINK_NAME_MAP[t]} for v, t in zip(vl, types)]
 
     # Create a map containing attention links with largest values for each node
     max_att_list = defaultdict(list)
-    # TODO: map
     if sankey_parameters.attention_select == AttentionHighlight.NONE:
         pass
     if sankey_parameters.attention_select == AttentionHighlight.ALL:
@@ -352,14 +358,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         *sorted(zip(revmap_x, revmap_y, revmap_values, revmap_indexes), key=lambda x: x[0]))
 
     # Add kl divergence values to residual links between consecutive layers
-    # TODO: move out
-    kl_map = {
-        "residual_att": "kl_diff_in-int", "residual_ff": "kl_diff_int-out", "residual_norm": "kl_diff_out-out",
-        "att_out": "kl_diff_att-int",
-        "ff_in": "kl_diff_int-ff", "ff_out": "kl_diff_ff-out"
-    }
     kl_values = [
-        linkinfo[kl_map[typ]][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
+        linkinfo[LINK_KL_MAP[typ]][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
         if typ not in ["att_in"] else None
         for typ, el in zip(types, un)
     ]
@@ -463,9 +463,9 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     ]
 
     if sankey_parameters.size_adapt == SizeAdapt.LAYER:
-        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 5) * (sankey_parameters.row_index - sankey_parameters.rowlimit)
+        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 10) * (sankey_parameters.row_index - sankey_parameters.rowlimit)
     elif sankey_parameters.size_adapt == SizeAdapt.TOKEN:
-        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 20) * l
+        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 22) * l
     else:
         size = sankey_parameters.size
 

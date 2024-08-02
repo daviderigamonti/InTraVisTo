@@ -17,7 +17,6 @@ import pandas as pd
 
 from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
-# TODO: put these values inside classes
 from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
 from utils import EmbeddingsType, ProbabilityType, ResidualContribution, CellWrapper, LayerWrapper, Decoder, clean_text
 from models import MODEL_COMPATIBILITY_MAP, ModelUtils, ModelCompatibilityInfo, LayerNormalizationWrapper
@@ -33,12 +32,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             cell[key] for cell in layer if key in cell
         ] for layer in decoded_layers]
 
-    # TODO: eventually put strategy as enum
     # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
     #       argument of cache.memoize
     @cache.memoize(ignore={"layers", "decoder", "norm"})
     def decode_layers(
-        *args, layers, strategy: str, norm, norm_id, decoder: Decoder, _session_id: str
+        *args, layers, strategy: str, norm, norm_id: str, decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
@@ -49,7 +47,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     @cache.memoize(ignore={"layers", "decoder", "norm"})
     def compute_probabilities(
         *args, layers, strategy: str, residual_contribution: ResidualContribution,
-        norm, norm_id, decoder: Decoder, _session_id: str
+        norm, norm_id: str, decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in compute_probabilities function {args}")
@@ -86,7 +84,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             encoding = next(encoding)
             print("Averaged multi-tokens for embedding injection")
 
-            # TODO: inject info creation
             inject_translate = {
                 EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
                 EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
@@ -142,27 +139,26 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         )
 
         # Handle embedding layer tokens
-        per_token_layers = LayerWrapper(0, session_id=session)
+        emb_layer = LayerWrapper(0, session_id=session)
         for i, tok_hs in enumerate(hidden_states[0][:-1]):
-            layer = CellWrapper(layer_number=0, token_number=i)
-            layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
-            per_token_layers.cells.append(layer)
-        layers.append(per_token_layers)
+            cell = CellWrapper(layer_number=0, token_number=i)
+            cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+            emb_layer.cells.append(cell)
+        layers.append(emb_layer)
 
-        # TODO: fix variable names
         # Iterate over layers
         for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:-1], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
             # Iterate over tokens
-            per_token_layers = LayerWrapper(layer_id + 1, session_id=session)
+            layer = LayerWrapper(layer_id + 1, session_id=session)
 
             for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1])):
-                layer = CellWrapper(layer_number=layer_id, token_number=token_id)
-                layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
-                layer.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
-                layer.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
-                layer.add_embedding(tok_inter, EmbeddingsType.POST_ATTENTION_RESIDUAL)
-                per_token_layers.cells.append(layer)
-            layers.append(per_token_layers)
+                cell = CellWrapper(layer_number=layer_id, token_number=token_id)
+                cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+                cell.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
+                cell.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
+                cell.add_embedding(tok_inter, EmbeddingsType.POST_ATTENTION_RESIDUAL)
+                layer.cells.append(cell)
+            layers.append(layer)
 
         for layer_hs, layer in zip(hidden_states, layers[1:-1]):
             for tok_hs, layer_token in zip(layer_hs, layer):
@@ -170,16 +166,16 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         # Handle normalized layer tokens
         last = len(layers)
-        per_token_layers = LayerWrapper(last, session_id=session)
+        norm_layer = LayerWrapper(last, session_id=session)
         for i, tok_hs in enumerate(hidden_states[last][:-1]):
-            layer = CellWrapper(layer_number=last, token_number=i)
-            layer.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
-            per_token_layers.cells.append(layer)
-        layers.append(per_token_layers)
+            cell = CellWrapper(layer_number=last, token_number=i)
+            cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
+            norm_layer.cells.append(cell)
+        layers.append(norm_layer)
 
         return generation_output, layers, [clean_text(t) for t in output_tokens[:input_len]], [clean_text(t) for t in output_tokens[input_len:]], session
 
-    
+
     @cache.memoize()
     def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution, norm_id):
         with models_lock:
@@ -208,76 +204,72 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "ffnn": extract_key_from_processed_layers(text, EmbeddingsType.POST_FF),
         }
 
+        linkinfo = {}
+
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
         token_diffs = decode_layers(
             layers=diffs, strategy=strategy, norm=norm, norm_id=norm_id, decoder=model.decoder,
             _session_id=session_id + DASH_SESSION_DIFF_GEN
         )
-        token_diffs = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
+        linkinfo["token_diffs"] = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
-        attn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
-        ffnn_res_percent = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
+        linkinfo["attn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
+        linkinfo["ffnn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
 
-        attentions = generated_output["attentions"]
-        # TODO: possibly use a map
-        kl_diffs_ii = [
-            torch.stack(layers[i].get_kldiff(
-                layers[i-1],
-                EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT,
-                norm,
-            ), dim=0)
-            for i in range(1, len(layers)-1)
-        ]
-        kl_diffs_ai = [
-            torch.stack(layer.get_kldiff(
-                layer,
-                EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION,
-                norm,
-            ), dim=0)
-            for layer in layers[1:-1]
-        ]
-        kl_diffs_io = [
-            torch.stack(layer.get_kldiff(
-                layer,
-                EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL,
-                norm,
-            ), dim=0)
-            for layer in layers[1:-1]
-        ]
-        kl_diffs_if = [
-            torch.stack(layer.get_kldiff(
-                layer,
-                EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL,
-                norm,
-            ), dim=0)
-            for layer in layers[1:-1]
-        ]
-        kl_diffs_fo = [
-            torch.stack(layer.get_kldiff(
-                layer,
-                EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF,
-                norm,
-            ), dim=0)
-            for layer in layers[1:-1]
-        ]
-        kl_diffs_oo = [None] * (len(layers) - 2) + [
-            torch.stack(layers[-1].get_kldiff(
-                layers[-2],
-                EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT,
-                norm,
-            ), dim=0)
-        ]
+        linkinfo["attentions"] = generated_output["attentions"]
+
+        linkinfo |= {
+            "kl_diff_in-int": [
+                torch.stack(layers[i].get_kldiff(
+                    layers[i-1],
+                    EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT,
+                    norm,
+                ), dim=0)
+                for i in range(1, len(layers)-1)
+            ],
+            "kl_diff_att-int": [
+                torch.stack(layer.get_kldiff(
+                    layer,
+                    EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION,
+                    norm,
+                ), dim=0)
+                for layer in layers[1:-1]
+            ],
+            "kl_diff_int-out": [
+                torch.stack(layer.get_kldiff(
+                    layer,
+                    EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                    norm,
+                ), dim=0)
+                for layer in layers[1:-1]
+            ],
+            "kl_diff_int-ff": [
+                torch.stack(layer.get_kldiff(
+                    layer,
+                    EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                    norm,
+                ), dim=0)
+                for layer in layers[1:-1]
+            ],
+            "kl_diff_ff-out": [
+                torch.stack(layer.get_kldiff(
+                    layer,
+                    EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF,
+                    norm,
+                ), dim=0)
+                for layer in layers[1:-1]
+            ],
+            "kl_diff_out-out": [None] * (len(layers) - 2) + [
+                torch.stack(layers[-1].get_kldiff(
+                    layers[-2],
+                    EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT,
+                    norm,
+                ), dim=0)
+            ],
+        }
         # TODO: choose how to pass values (as torch tensors or python lists)
         #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
-        linkinfo = {
-            "attentions": attentions, "attn_res_percent": attn_res_percent,
-            "ffnn_res_percent": ffnn_res_percent, "diff": token_diffs,
-            "kl_diff_in-int": kl_diffs_ii, "kl_diff_att-int": kl_diffs_ai,
-            "kl_diff_int-out": kl_diffs_io, "kl_diff_int-ff": kl_diffs_if, "kl_diff_ff-out": kl_diffs_fo,
-            "kl_diff_out-out": kl_diffs_oo,
-        }
-
         return dfs, linkinfo, len(input_tok), len(output_tok)
 
     # TODO: should be memoized but some normalization modules don't like it
@@ -573,7 +565,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
             "<br><b>Layer</b>: %{y}" +
             "<br><b>Token position</b>: %{x}" +
-            "<br><b>Secondary representations</b>: %{text}" +
+            "<br><b>Top-5 tokens</b>: %{text}" +
             "<extra></extra>",
             texttemplate="%{text[0]}",
             textfont={"size": tab_vis_config["font_size"]},
@@ -827,7 +819,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     def add_injection(button, vis_config, inject_container, custom_emb, custom_emb_location, custom_decoding):
         if button is None:
             raise PreventUpdate
-        # TODO: where are target layer/token coming from?
         target_layer = vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None
         target_token = vis_config["x"] if "x" in vis_config else None
         return inject_container + [extra_layout.generate_inject_card(
@@ -936,7 +927,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     def generate_end_hooks(_):
         return False, False
 
-    #TODO: change into something more standardized
     @app.callback(
         [
             Output("att_high_k_div", "style"),
@@ -955,7 +945,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ]
         return styles
 
-    #TODO: change into something more standardized
     @app.callback(
         Output("reapport_start_div", "style"),
         [
@@ -966,7 +955,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         style = {"display": "flex"} if len(hide_start_sankey) > 0 else {"display": "none"}
         return style
 
-    #TODO: change into something more standardized
     @app.callback(
         Output("sankey_graph", "style"),
         [

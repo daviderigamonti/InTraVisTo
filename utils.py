@@ -67,7 +67,7 @@ class CellWrapper:
 
     def __reduce__(self):
         emb_keys = list(self.embeddings.keys())
-        emb_block = torch.stack(list(self.embeddings.values()), dim = 0)
+        emb_block = torch.stack(list(self.embeddings.values()), dim=0)
         return (self.__class__, (self.layer_number, self.token_number, emb_keys, emb_block, self.probabilities))
 
     def add_embedding(self, tensor: torch.Tensor, emb_type: EmbeddingsType):
@@ -90,13 +90,6 @@ class CellWrapper:
         probs = torch.nn.functional.softmax(logits, dim=-1)
         token_id = logits.argmax()
         return logits, probs, token_id
-
-    # TODO: remove
-    def __sub__(self, other):
-        l = CellWrapper((self.layer_number + other.layer_number) / 2)
-        for k in self.embeddings.keys() & other.embeddings.keys():
-            l.add_embedding(self.embeddings[k] - other.embeddings[k], k)
-        return l
 
 class LayerWrapper:
     def __init__(
@@ -152,9 +145,17 @@ class LayerWrapper:
         return LayerWrapper(layer_number=self.layer_number, cells=self.cells[start:end])
 
     # TODO: maybe inefficient?
+    # l.cells = [
+    #     CellWrapper(
+    #         self.layer_number,
+    #         cell1.token_number,
+    #         emb_keys=keys,
+    #         emb_block=torch.stack([cell1.embeddings[k] - cell2.embeddings[k] for k in keys], dim=0)
+    #     )
+    #     for cell1, cell2 in zip(self, other) if (keys := cell1.embeddings.keys() & cell2.embeddings.keys()) or True
+    # ]
     def get_diff(self, other: Self):
         l = LayerWrapper(
-            #layer_number=(self.layer_number + other.layer_number) / 2,
             layer_number=self.layer_number,
             session_id=self.session_id,
         )
@@ -164,8 +165,7 @@ class LayerWrapper:
                 c.add_embedding(cell1.embeddings[k] - cell2.embeddings[k], k)
             l.cells.append(c)
         return l
-    
-    # TODO: maybe inefficient?
+
     def get_kldiff(self, other: Self, emb_type: EmbeddingsType, other_emb_type: EmbeddingsType = None, norm = None):
         other_emb_type = emb_type if other_emb_type is None else other_emb_type
         return [
@@ -227,7 +227,8 @@ class Decoder:
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                {k: self._iterative_decoding(emb, dm, norm) for k, emb in cell.get_embeddings(norm).items()}
+                # {k: self._topk_decoding(emb, dm) for k, emb in cell.get_embeddings(norm).items()}
+                {k: self._iterative_decoding(emb, dm, norm) for k, emb in cell.get_embeddings().items()}
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
@@ -236,7 +237,7 @@ class Decoder:
         secondary_tokens = []
         norms = []
         for rep in range(self.max_rep):
-            logits = torch.matmul(emb, decoding_matrix.T)
+            logits = torch.matmul(normalization(emb), decoding_matrix.T)
             token_id = logits.argmax()
             real_embed = decoding_matrix[token_id]
             secondary_token = self.tokenizer.convert_ids_to_tokens([token_id])[0]
@@ -249,12 +250,17 @@ class Decoder:
                 secondary_tokens.append(secondary_token)
             norms.append(norm)
             # Subtract the inverse to the current hidden state
-            # TODO: should we also apply normalization to this state?
-            emb = normalization(emb - normalization(real_embed))
+            emb = emb - real_embed
         return [clean_text(s) for s in secondary_tokens]
 
+    def _topk_decoding(self, emb, decoding_matrix, k: int = 5):
+        return [
+            clean_text(self.tokenizer.convert_ids_to_tokens([topk_id])[0])
+            for topk_id in torch.topk(torch.matmul(emb, decoding_matrix.T), k=k, sorted=True).indices
+        ]
+
     def compute_probabilities(
-        self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution, norm: bool
+        self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution, norm
     ):
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
@@ -264,7 +270,6 @@ class Decoder:
             ] for layer, dm in zip(layers, decoding_matrix)
         ]
 
-    # TODO: Horrible
     def compute_cell(
         self, cell: CellWrapper, decoding_matrix, residual_contribution: ResidualContribution, norm: bool
     ):
