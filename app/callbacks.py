@@ -123,7 +123,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         generation_output = {
             "sequences": generation_result["output_ids"].squeeze(),
-            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)[:,:-1,:-1]
+            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)
         }
 
         # Create a list of LayerWrapper
@@ -145,6 +145,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             attention_outputs = attention_outputs[:, :-1, :]
             feed_forward_outputs = feed_forward_outputs[:, :-1, :]
             intermediate_hidden_states = intermediate_hidden_states[:, :-1, :]
+            generation_output["attentions"] = generation_output["attentions"][:,:-1,:-1]
 
         # Handle embedding layer tokens
         emb_layer = LayerWrapper(0, session_id=session)
