@@ -12,8 +12,6 @@ from app.layout import generate_layout
 
 # ENVIRONMENT VARIABLES
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["HF_HOME"] = "huggingface"
-os.environ["TRANSFORMERS_CACHE"] = "huggingface"
 hf_auth = os.environ["HF_TOKEN"]
 
 models = {}

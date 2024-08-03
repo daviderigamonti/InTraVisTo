@@ -10,8 +10,8 @@ RUN --mount=type=cache,target=/root/.cache/pip python3 -m pip install \
 
 ENV PYTHONPATH "${PYTHONPATH}:./submodules/transformer_wrappers/src"
 
-ENV HF_HOME ./huggingface
-ENV TRANSFORMERS_CACHE ./huggingface
+ENV HF_HOME=./huggingface
+ENV TRANSFORMERS_CACHE=./huggingface
 
 ENV HOST 0.0.0.0
 
