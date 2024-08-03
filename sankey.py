@@ -61,7 +61,7 @@ class SankeyParameters:
     )
     link_color_map: dict[str, float] = field(
         default_factory=lambda: {
-            "Default": (100, 100, 100),
+            "Default": (255, 255, 255),
             "residual_norm": (31, 93, 224),
             "residual_att": (31, 93, 224),
             "residual_ff": (31, 93, 224),
@@ -415,7 +415,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     ]
     for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.3, range_max=1.1)):
         color = sankey_parameters.link_color_map[typ].copy()
-        # Color residuals according todifference of kl divergence
+        # Color residuals according to difference of kl divergence
         if kl is not None:
             color = change_color_brightness(color, kl)
         elif typ in ["att_in"]:
@@ -438,6 +438,9 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         for y_index in np.arange(-0.5, max(revmap_y) + 1, 0.5)
     }
 
+    # Halve columns that belong to attention/feedforward
+    columns_width = {k: c if math.ceil(k) == k else c/2 for k,c in columns_width.items()}
+
     # Infer optimal column padding
     s = sum(columns_width.values())
     r = 1 - s
@@ -458,8 +461,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     revmap_x = rescale_list(revmap_x, range_min=sankey_parameters.sankey_zero, range_max=1, invert=True)
     revmap_y = [
         # Shift attention/ffnn nodes closer to their reference nodes
-        columns_ys[y] + columns_width[y] / 2
-        for y, v in zip(revmap_y, revmap_values)
+        columns_ys[y] + columns_width[y] / 2 for y, v in zip(revmap_y, revmap_values)
     ]
 
     if sankey_parameters.size_adapt == SizeAdapt.LAYER:
@@ -468,6 +470,12 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         size = (sankey_parameters.size / 2) + (sankey_parameters.size / 22) * l
     else:
         size = sankey_parameters.size
+
+    hovertemplates = [
+        (le["name"] + " from " + lab[un_el] + " to " + lab[ov_el] + "<br>" + le["kl_diff"] + f"<extra>{le['v']:.1%}</extra>")
+        if (le["type"] not in ["att_in"] or un_el in max_att_list[ov_el]) else "<extra></extra>"
+        for le, un_el, ov_el in zip(links_extra, un, ov)
+    ]
 
     fig = go.Figure(
         go.Sankey(
@@ -485,12 +493,13 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
             "pad": 10000,
         },
         link={
-            "customdata": links_extra,
-            "hovertemplate": "%{customdata.name} from %{target.label} to %{source.label}<br>%{customdata.kl_diff}<extra>%{customdata.v:.1%}</extra>",
+            "customdata": hovertemplates,
+            "hovertemplate": "%{customdata}",
             "source": ov,
             "target": un,
             "value": rescaled_vl,
-            "color": link_colors
+            "color": link_colors,
+            "line": {"color": "rgba(255,255,255,0)"},
         }
     ))
     fig.update_layout(

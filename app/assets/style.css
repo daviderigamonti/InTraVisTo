@@ -153,3 +153,8 @@
 .modebar-group .modebar-btn[data-title="Reset view"] {
     display: none;
 }
+
+/* !!! Workaround for Sankey diagram un-removable tooltips!!! */
+#sankey_graph .main-svg .hoverlayer .hovertext:not(:has(.name)) path {
+    display: none;
+}
