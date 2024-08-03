@@ -123,29 +123,21 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         generation_output = {
             "sequences": generation_result["output_ids"].squeeze(),
-            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)
+            "attentions": standardize_wrapped_tensors(generation_result["attention_weights"]).mean(dim=1)[:,:-1,:-1]
         }
 
         # Create a list of LayerWrapper
         layers = []
 
-        hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])
-        attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])
-        feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])
-        intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])
+        hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])[:,:-1,:]
+        attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])[:,:-1,:]
+        feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])[:,:-1,:]
+        intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])[:,:-1,:]
 
         # Append normalized output states to hidden states tensor
         hidden_states = torch.cat(
             (hidden_states, generation_result["output_hidden_state"].detach()), dim=0
         )
-
-        # Check for extra token
-        if hidden_states.shape[1] > input_len + run_config["max_new_tok"]:
-            hidden_states = hidden_states[:, :-1, :]
-            attention_outputs = attention_outputs[:, :-1, :]
-            feed_forward_outputs = feed_forward_outputs[:, :-1, :]
-            intermediate_hidden_states = intermediate_hidden_states[:, :-1, :]
-            generation_output["attentions"] = generation_output["attentions"][:,:-1,:-1]
 
         # Handle embedding layer tokens
         emb_layer = LayerWrapper(0, session_id=session)
