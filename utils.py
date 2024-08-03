@@ -49,7 +49,7 @@ def _res_contrib_kl_div(residual, x, ref, embs, norm, **kwargs):
         torch.log_softmax(emb_ref, dim=-1),
         log_target=True, reduction="sum",
     )
-    return (kldiv_x / (kldiv_res + kldiv_x)).detach().float().cpu()
+    return (kldiv_x / (kldiv_res + kldiv_x + 1e-10)).detach().float().cpu()
 
 # TODO: make more efficient/general
 def clean_text(t):
