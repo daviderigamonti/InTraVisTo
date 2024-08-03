@@ -93,6 +93,11 @@ def _generation():
                     dbc.Spinner(html.Div("Generate", id="generate_button_load"), color="white")
                 ], id="generate_button", className="btn btn-primary"),
             ], className="col-md-auto"),
+            dbc.Alert(
+                ["Error during generation"],
+                id="model_generate_alert", 
+                color="danger", dismissable=True, fade=True, is_open=False,
+            ),
         ], className="d-flex align-items-center"),
         html.Hr(),
         dbc.Row([

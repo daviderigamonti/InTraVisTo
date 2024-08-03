@@ -13,7 +13,6 @@ from transformers import GenerationConfig
 
 import torch
 import plotly.graph_objects as go
-import pandas as pd
 
 from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
 
@@ -212,7 +211,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             layers=diffs, strategy=strategy, norm=norm, norm_id=norm_id, decoder=model.decoder,
             _session_id=session_id + DASH_SESSION_DIFF_GEN
         )
-        linkinfo["token_diffs"] = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
+        linkinfo["diff"] = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
         linkinfo["attn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         linkinfo["ffnn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
@@ -468,29 +467,35 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
         session_id = str(uuid.uuid4())
 
-        if not model_id:
-            return initial_callbacks, session_id, no_update, no_update, True
+        try:
 
-        with models_lock:
-            if model_id not in models:
+            if not model_id:
                 raise PreventUpdate
-            model = models[model_id]
 
-        _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
-        # Caching values
-        norm = get_normalization(model_id=model_id, norm=vis_config["norm"])
-        _ = decode_layers(
-            layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
-            decoder=model.decoder, _session_id=session_id
-        )
-        _ = compute_probabilities(
-            layers=layers,
-            strategy=vis_config["strategy"],
-            residual_contribution=vis_config["res_contrib"],
-            norm=norm, norm_id=vis_config["norm"],
-            decoder=model.decoder,
-            _session_id=session_id,
-        )
+            with models_lock:
+                if model_id not in models:
+                    raise PreventUpdate
+                model = models[model_id]
+
+            _, layers, _, _, _ = model_generate(text, model_id, run_config, session_id)
+            # Caching values
+            norm = get_normalization(model_id=model_id, norm=vis_config["norm"])
+            _ = decode_layers(
+                layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
+                decoder=model.decoder, _session_id=session_id
+            )
+            _ = compute_probabilities(
+                layers=layers,
+                strategy=vis_config["strategy"],
+                residual_contribution=vis_config["res_contrib"],
+                norm=norm, norm_id=vis_config["norm"],
+                decoder=model.decoder,
+                _session_id=session_id,
+            )
+        
+        except:
+            # Avoid locking input fields
+            return initial_callbacks, session_id, no_update, False, True
 
         # TODO: maybe add? # torch.cuda.empty_cache()
         return initial_callbacks, session_id, run_config, True, True
@@ -557,7 +562,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         fig = go.Figure(data=go.Heatmap(
             z=p,
-            text=pd.DataFrame(text),
+            text=text,
             xgap=2,
             ygap=2,
             x=[i - 0.5 for i in range(0, input_len + output_len)],
@@ -760,7 +765,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             if model_id not in models:
                 model = ModelUtils(ModelInfo(**model_info), hf_token=os.environ["HF_TOKEN"])
                 if model.model is None:
-                    return initial_callbacks, "", {}, 1, True, no_update
+                    return initial_callbacks, "", {}, True, no_update
                 models |= {model_id: model}
                 
         return initial_callbacks, model_id, model_info, False, True
@@ -918,14 +923,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         [
             Output("text", "disabled", allow_duplicate=True),
             Output("model_select", "disabled", allow_duplicate=True),
+            Output("model_generate_alert", "is_open"),
         ],
         [
             Input("generation_notify", "data"),
         ],
         prevent_initial_call=True,
     )
-    def generate_end_hooks(_):
-        return False, False
+    def generate_end_hooks(notify):
+        return False, False, not notify
 
     @app.callback(
         [

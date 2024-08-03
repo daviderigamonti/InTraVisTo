@@ -35,12 +35,19 @@ def _res_contrib_norm(residual, x, embs, **kwargs):
         embs[residual].norm(2, dim=-1) / (embs[residual].norm(2, dim=-1) + embs[x].norm(2, dim=-1))
     ).squeeze().detach().float().cpu()
 
-def _res_contrib_kl_div(residual, x, ref, embs, **kwargs):
+def _res_contrib_kl_div(residual, x, ref, embs, norm, **kwargs):
+    emb_ref = norm(embs[ref])
+    emb_res = norm(embs[residual])
+    emb_x = norm(embs[x])
     kldiv_res = torch.nn.functional.kl_div(
-        torch.log_softmax(embs[residual], dim=-1), torch.log_softmax(embs[ref], dim=-1), log_target=True, reduction="sum"
+        torch.log_softmax(emb_res, dim=-1),
+        torch.log_softmax(emb_ref, dim=-1),
+        log_target=True, reduction="sum",
     )
     kldiv_x = torch.nn.functional.kl_div(
-        torch.log_softmax(embs[x], dim=-1), torch.log_softmax(embs[ref], dim=-1), log_target=True, reduction="sum"
+        torch.log_softmax(emb_x, dim=-1),
+        torch.log_softmax(emb_ref, dim=-1),
+        log_target=True, reduction="sum",
     )
     return (kldiv_x / (kldiv_res + kldiv_x)).detach().float().cpu()
 
@@ -280,7 +287,7 @@ class Decoder:
         embs = {}
         for k in cell.embeddings.keys():
             _, probs, pred_id = cell.get_logits_info(k, decoding_matrix, norm)
-            embs[k] = cell.get_embedding(k, norm)
+            embs[k] = cell.get_embedding(k)
             entropy[k] = -torch.sum(probs * torch.log(probs)).detach().cpu()
             argmax[k] = probs[pred_id].detach().cpu()
 
@@ -293,6 +300,7 @@ class Decoder:
                 x=EmbeddingsType.POST_ATTENTION,
                 ref=EmbeddingsType.POST_ATTENTION_RESIDUAL,
                 embs=embs,
+                norm=norm,
             )
         res |= {ProbabilityType.ATT_RES_PERCENT: att_res_percent}
 
@@ -303,6 +311,7 @@ class Decoder:
                 x=EmbeddingsType.POST_FF,
                 ref=EmbeddingsType.BLOCK_OUTPUT,
                 embs=embs,
+                norm=norm,
             )
         res |= {ProbabilityType.FFNN_RES_PERCENT: ffnn_res_percent}
         return res

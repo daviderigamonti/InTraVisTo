@@ -115,49 +115,55 @@ class ModelUtils:
             token=hf_token,
         )
 
-        tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
+        try:
 
-        # TODO: find a solution for this
-        # Compute prefix tokens (9 is a random number)
-        prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).flatten()
-        prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
+            tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
 
-        MODEL_CONFIG = {
-            "trust_remote_code": True,
-            "device_map": device,
-            "token": hf_token,
-            "torch_dtype": bfloat16,
-        }
+            # TODO: find a solution for this
+            # Compute prefix tokens (9 is a random number)
+            prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).flatten()
+            prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
 
-        TOKENIZER_CONFIG = {
-            "token": hf_token,
-        }
+            MODEL_CONFIG = {
+                "trust_remote_code": True,
+                "device_map": device,
+                "token": hf_token,
+                "torch_dtype": bfloat16,
+            }
 
-        model = None
-        while True:
-            try:
-                model = InjectCausalLMWrapper.from_pretrained(
-                    model_id, model_kwargs=MODEL_CONFIG,
-                    quantization_configs=quant_config,
-                    tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
-                )
-                model.enable_wrapper()
-                break
-            except OutOfMemoryError:
+            TOKENIZER_CONFIG = {
+                "token": hf_token,
+            }
 
-                del model
-                model = None
-                gc.collect()
-                # TODO: add check for device
-                torch.cuda.empty_cache()
+            model = None
+            while True:
+                try:
+                    model = InjectCausalLMWrapper.from_pretrained(
+                        model_id, model_kwargs=MODEL_CONFIG,
+                        quantization_configs=quant_config,
+                        tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
+                    )
+                    model.enable_wrapper()
+                    break
+                except OutOfMemoryError:
+                    del model
+                    model = None
+                    gc.collect()
+                    # TODO: add check for device
+                    torch.cuda.empty_cache()
 
-                tries -= 1
-                if tries <= 0:
-                    print(f"Could not load {model_id}")
-                    return None, None, None, None, None
-                print(f"Out of Memory while loading {model_id}, {tries} attempt(s) left, next attempt in {try_timeout} seconds")
+                    tries -= 1
+                    if tries <= 0:
+                        print(f"Could not load {model_id}")
+                        return None, None, None, None, None
+                    print(f"Out of Memory while loading {model_id}, {tries} attempt(s) left, next attempt in {try_timeout} seconds")
 
-                time.sleep(try_timeout)
+                    time.sleep(try_timeout)
 
-        decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
+            decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
+
+        except RuntimeError:
+            print(f"Could not load {model_id}")
+            return None, None, None, None, None
+
         return tokenizer, model, model_config, decoder, prefix_tokens
