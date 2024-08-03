@@ -62,7 +62,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             model = models[model_id]
         inputs = model.tokenizer(prompt, return_tensors="pt").to(model.info.device)
 
-        input_len = len(inputs.input_ids.squeeze().tolist())
+        input_len = inputs.input_ids.squeeze()
+        # 1-dimensional tensors get squeezed into 0-dimensional ones
+        input_len = 1 if input_len.dim() == 0 else len(input_len)
 
         injects = []
         for inject in run_config["injects"]:
@@ -137,20 +139,27 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             (hidden_states, generation_result["output_hidden_state"].detach()), dim=0
         )
 
+        # Check for extra token
+        if hidden_states.shape[1] > input_len + run_config["max_new_tok"]:
+            hidden_states = hidden_states[:, :-1, :]
+            attention_outputs = attention_outputs[:, :-1, :]
+            feed_forward_outputs = feed_forward_outputs[:, :-1, :]
+            intermediate_hidden_states = intermediate_hidden_states[:, :-1, :]
+
         # Handle embedding layer tokens
         emb_layer = LayerWrapper(0, session_id=session)
-        for i, tok_hs in enumerate(hidden_states[0][:-1]):
+        for i, tok_hs in enumerate(hidden_states[0]):
             cell = CellWrapper(layer_number=0, token_number=i)
             cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
             emb_layer.cells.append(cell)
         layers.append(emb_layer)
 
         # Iterate over layers
-        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:-1], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
+        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
             # Iterate over tokens
             layer = LayerWrapper(layer_id + 1, session_id=session)
 
-            for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(zip(layer_hs[:-1], layer_att[:-1], layer_ffnn[:-1], layer_inter[:-1])):
+            for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(zip(layer_hs, layer_att, layer_ffnn, layer_inter)):
                 cell = CellWrapper(layer_number=layer_id, token_number=token_id)
                 cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
                 cell.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
@@ -159,14 +168,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 layer.cells.append(cell)
             layers.append(layer)
 
-        for layer_hs, layer in zip(hidden_states, layers[1:-1]):
+        for layer_hs, layer in zip(hidden_states, layers[1:]):
             for tok_hs, layer_token in zip(layer_hs, layer):
                 layer_token.add_embedding(tok_hs, EmbeddingsType.BLOCK_INPUT)
 
         # Handle normalized layer tokens
         last = len(layers)
         norm_layer = LayerWrapper(last, session_id=session)
-        for i, tok_hs in enumerate(hidden_states[last][:-1]):
+        for i, tok_hs in enumerate(hidden_states[last]):
             cell = CellWrapper(layer_number=last, token_number=i)
             cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
             norm_layer.cells.append(cell)
@@ -559,6 +568,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         offset = 0 if tab_vis_config["hide_start"] else 1
         input_len = len(input_tok)
         output_len = len(output_tok)
+
+        # TODO: find nicer workaround
+        # Avoid empty tokens at start and end
+        if p[0] == [] and text[0] == []:
+            text[0] = [[[""]] * (input_len + output_len + offset - 1)]
+            p[0] = [None] * (input_len + output_len + offset - 1)
+        if p[-1] == [] and text[-1] == []:
+            text[-1] = [[[""]] * (input_len + output_len + offset - 1)]
+            p[-1] = [None] * (input_len + output_len + offset - 1)
 
         fig = go.Figure(data=go.Heatmap(
             z=p,

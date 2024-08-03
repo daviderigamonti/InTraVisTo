@@ -54,6 +54,7 @@ MODEL_COMPATIBILITY_MAP = {
     "google/gemma-2b": COMPAT_LLAMA,
     "google/gemma-7b": COMPAT_LLAMA,
     "google/gemma-2-2b": COMPAT_LLAMA,
+    "meta-llama/Meta-Llama-3-8B": COMPAT_LLAMA,
 }
 
 
