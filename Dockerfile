@@ -9,6 +9,8 @@ RUN --mount=type=cache,target=/root/.cache/pip python3 -m pip install \
     -r requirements.txt \
     -r ./transformer_wrappers_requirements.txt
 
+COPY . .
+
 ENV PYTHONPATH "${PYTHONPATH}:./submodules/transformer_wrappers/src"
 
 ENV HF_HOME=./huggingface
