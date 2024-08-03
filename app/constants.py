@@ -84,8 +84,11 @@ MODEL_MAP = [
     {"label": "Llama 2 7B", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", CUDA_DEVICE, False))},
     {"label": "Mistral Instruct 0.2 (4bit)", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, True))},
     {"label": "Mistral Instruct 0.2", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, False))},
-    {"label": "Gemma 2 2B", "value": encode_dataclass(ModelInfo("google/gemma-2-2b", CUDA_DEVICE, False))},
-    {"label": "Gemma 2 2B (CPU)", "value": encode_dataclass(ModelInfo("google/gemma-2-2b", "cpu", False))},
+    {"label": "Gemma 2B", "value": encode_dataclass(ModelInfo("google/gemma-2b", CUDA_DEVICE, False))},
+    {"label": "Gemma 7B", "value": encode_dataclass(ModelInfo("google/gemma-7b", CUDA_DEVICE, False))},
+    {"label": "Gemma 7B (4bit)", "value": encode_dataclass(ModelInfo("google/gemma-7b", CUDA_DEVICE, True))},
+    # {"label": "Gemma 2 2B", "value": encode_dataclass(ModelInfo("google/gemma-2-2b", CUDA_DEVICE, False))},
+    # {"label": "Gemma 2 2B (CPU)", "value": encode_dataclass(ModelInfo("google/gemma-2-2b", "cpu", False))},
 ]
 
 TABLE_Z_FORMAT = {

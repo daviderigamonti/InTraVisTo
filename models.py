@@ -51,6 +51,8 @@ MODEL_COMPATIBILITY_MAP = {
     "gpt2": COMPAT_GPT,
     "meta-llama/Llama-2-7b-hf": COMPAT_LLAMA,
     "mistralai/Mistral-7B-Instruct-v0.2": COMPAT_LLAMA,
+    "google/gemma-2b": COMPAT_LLAMA,
+    "google/gemma-7b": COMPAT_LLAMA,
     "google/gemma-2-2b": COMPAT_LLAMA,
 }
 
