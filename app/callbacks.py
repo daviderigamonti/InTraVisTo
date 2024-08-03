@@ -130,7 +130,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # Create a list of LayerWrapper
         layers = []
 
-        hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])[:,:-1,:]
+        hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])
         attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])[:,:-1,:]
         feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])[:,:-1,:]
         intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])[:,:-1,:]
@@ -138,7 +138,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # Append normalized output states to hidden states tensor
         hidden_states = torch.cat(
             (hidden_states, generation_result["output_hidden_state"].detach()), dim=0
-        )
+        )[:,:-1,:]
 
         # Handle embedding layer tokens
         emb_layer = LayerWrapper(0, session_id=session)
