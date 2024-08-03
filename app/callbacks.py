@@ -10,6 +10,7 @@ import os
 from dash import Output, Input, State, ctx, no_update, ALL, clientside_callback, ClientsideFunction
 from dash.exceptions import PreventUpdate
 from transformers import GenerationConfig
+from torch.cuda import OutOfMemoryError
 
 import torch
 import plotly.graph_objects as go
@@ -452,6 +453,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Output("current_run_config", "data"),
             Output("generation_notify", "data"),
             Output("generate_button_load", "notify"),
+            Output("model_generate_alert", "children"),
         ],
         [
             Input("initial_callbacks", "data"),
@@ -494,13 +496,16 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 decoder=model.decoder,
                 _session_id=session_id,
             )
-        
-        except:
-            # Avoid locking input fields
-            return initial_callbacks, session_id, no_update, False, True
+        # Avoid locking input fields
+        except (OutOfMemoryError, RuntimeError) as _:
+            return initial_callbacks, session_id, no_update, False, True, "Out of memory"
+        except PreventUpdate as _:
+            return initial_callbacks, no_update, no_update, False, True, "Model not loaded"
+        except Exception as _:
+            return initial_callbacks, session_id, no_update, False, True, "Error during generation"
 
         # TODO: maybe add? # torch.cuda.empty_cache()
-        return initial_callbacks, session_id, run_config, True, True
+        return initial_callbacks, session_id, run_config, True, True, no_update
 
 
     @app.callback(
@@ -751,6 +756,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Output("initial_callbacks", "data", allow_duplicate=True),
             Output("model_id", "data", allow_duplicate=True),
             Output("model_info", "data", allow_duplicate=True),
+            Output("model_select_alert", "children"),
             Output("model_select_alert", "is_open"),
             Output("new_model_notify", "data"),
         ],
@@ -769,17 +775,21 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
 
         if not model_id:
-            return initial_callbacks, no_update, no_update, False, no_update
+            return initial_callbacks, no_update, no_update, no_update, False, no_update
 
         # A dedicated lock is used since we are interested in model loading being exclusive only with othere instances of itself
         with model_loading_lock:
             if model_id not in models:
-                model = ModelUtils(ModelInfo(**model_info), hf_token=os.environ["HF_TOKEN"])
-                if model.model is None:
-                    return initial_callbacks, "", {}, True, no_update
-                models |= {model_id: model}
-                
-        return initial_callbacks, model_id, model_info, False, True
+                try:
+                    model = ModelUtils(ModelInfo(**model_info), hf_token=os.environ["HF_TOKEN"])
+                    if model.model is None:
+                        return initial_callbacks, "", {}, "Out of memory while loading model", True, no_update
+                    models |= {model_id: model}
+                except RuntimeError as e:
+                    return initial_callbacks, "", {}, "No NVIDIA Driver found", True, no_update
+                except Exception as e:   
+                    return initial_callbacks, "", {}, "Error while loading model", True, no_update
+        return initial_callbacks, model_id, model_info, no_update, False, True
 
     @app.callback(
         [

@@ -166,8 +166,8 @@ class ModelUtils:
 
             decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
 
-        except RuntimeError:
+        except RuntimeError as e:
             print(f"Could not load {model_id}")
-            return None, None, None, None, None
+            raise e
 
         return tokenizer, model, model_config, decoder, prefix_tokens
