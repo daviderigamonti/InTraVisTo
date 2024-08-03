@@ -16,6 +16,9 @@ def decode_dataclass(c, class_name):
     return class_name(**json.loads(c))
 
 
+TITLE = "InTraVisTo"
+ASSETS_PATH = "./app/assets/"
+FONT_AWESOME = "https://use.fontawesome.com/releases/v5.13.0/css/all.css"
 CUDA_DEVICE = "cuda"
 
 DASH_SESSION_DIFF_GEN = "TOKEN_DIFFS"
@@ -81,6 +84,8 @@ MODEL_MAP = [
     {"label": "Llama 2 7B", "value": encode_dataclass(ModelInfo("meta-llama/Llama-2-7b-hf", CUDA_DEVICE, False))},
     {"label": "Mistral Instruct 0.2 (4bit)", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, True))},
     {"label": "Mistral Instruct 0.2", "value": encode_dataclass(ModelInfo("mistralai/Mistral-7B-Instruct-v0.2", CUDA_DEVICE, False))},
+    {"label": "Gemma 2 2B", "value": encode_dataclass(ModelInfo("google/gemma-2-2b", CUDA_DEVICE, False))},
+    {"label": "Gemma 2 2B (CPU)", "value": encode_dataclass(ModelInfo("google/gemma-2-2b", "cpu", False))},
 ]
 
 TABLE_Z_FORMAT = {

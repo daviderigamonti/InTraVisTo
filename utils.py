@@ -234,8 +234,8 @@ class Decoder:
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                # {k: self._topk_decoding(emb, dm) for k, emb in cell.get_embeddings(norm).items()}
-                {k: self._iterative_decoding(emb, dm, norm) for k, emb in cell.get_embeddings().items()}
+                {k: self._topk_decoding(emb, dm) for k, emb in cell.get_embeddings(norm).items()}
+                # {k: self._iterative_decoding(emb, dm, norm) for k, emb in cell.get_embeddings().items()}
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
         ]

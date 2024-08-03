@@ -10,11 +10,6 @@ from app.constants import *  # pylint:disable=W0401,W0614
 from app.callbacks import generate_callbacks
 from app.layout import generate_layout
 
-# CONSTANTS
-TITLE = "InTraVisTo"
-ASSETS_PATH = "./app/assets/"
-FONT_AWESOME = "https://use.fontawesome.com/releases/v5.13.0/css/all.css"
-
 # ENVIRONMENT VARIABLES
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["HF_HOME"] = "huggingface"
