@@ -2,11 +2,12 @@ FROM python:3.12
 
 WORKDIR /app/
 
-COPY . .
+COPY requirements.txt .
+COPY ./submodules/transformer_wrappers/requirements.txt ./transformer_wrappers_requirements.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip python3 -m pip install \ 
     -r requirements.txt \
-    -r ./submodules/transformer_wrappers/requirements.txt
+    -r ./transformer_wrappers_requirements.txt
 
 ENV PYTHONPATH "${PYTHONPATH}:./submodules/transformer_wrappers/src"
 
