@@ -15,14 +15,17 @@ from torch.cuda import OutOfMemoryError
 import torch
 import plotly.graph_objects as go
 
-from transformer_wrappers.wrappers import InjectInfo, InjectPosition # pylint:disable=E0401,E0611
+from transformer_wrappers.wrappers import InjectInfo, InjectPosition
 
-from sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
-from utils import EmbeddingsType, ProbabilityType, ResidualContribution, CellWrapper, LayerWrapper, Decoder, clean_text
-from models import MODEL_COMPATIBILITY_MAP, ModelUtils, ModelCompatibilityInfo, LayerNormalizationWrapper
+from utils.sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
+from utils.utils import (
+    EmbeddingsType, ProbabilityType, ResidualContribution, CellWrapper, LayerWrapper, Decoder,
+    clean_text
+)
+from utils.models import MODEL_COMPATIBILITY_MAP, ModelUtils, ModelCompatibilityInfo, LayerNormalizationWrapper
 from app import extra_layout
-from app.constants import * # pylint:disable=W0401,W0614
-from app.defaults import * # pylint:disable=W0401,W0614
+from app.constants import *
+from app.defaults import *
 
 
 def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
@@ -133,7 +136,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         hidden_states = standardize_wrapped_tensors(generation_result["hidden_states"])
         attention_outputs = standardize_wrapped_tensors(generation_result["attention_outputs"])[:,:-1,:]
         feed_forward_outputs = standardize_wrapped_tensors(generation_result["feed_forward_outputs"])[:,:-1,:]
-        intermediate_hidden_states = standardize_wrapped_tensors(generation_result["intermediate_hidden_states"])[:,:-1,:]
+        intermediate_hidden_states = standardize_wrapped_tensors(
+            generation_result["intermediate_hidden_states"]
+        )[:,:-1,:]
 
         # Append normalized output states to hidden states tensor
         hidden_states = torch.cat(
@@ -149,11 +154,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         layers.append(emb_layer)
 
         # Iterate over layers
-        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_states)):
+        for layer_id, (layer_hs, layer_att, layer_ffnn, layer_inter) in enumerate(
+            zip(hidden_states[1:], attention_outputs, feed_forward_outputs, intermediate_hidden_states)
+        ):
             # Iterate over tokens
             layer = LayerWrapper(layer_id + 1, session_id=session)
 
-            for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(zip(layer_hs, layer_att, layer_ffnn, layer_inter)):
+            for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(
+                zip(layer_hs, layer_att, layer_ffnn, layer_inter)
+            ):
                 cell = CellWrapper(layer_number=layer_id, token_number=token_id)
                 cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
                 cell.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
@@ -175,7 +184,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             norm_layer.cells.append(cell)
         layers.append(norm_layer)
 
-        return generation_output, layers, [clean_text(t) for t in output_tokens[:input_len]], [clean_text(t) for t in output_tokens[input_len:]], session
+        return generation_output, \
+            layers, \
+            [clean_text(t) for t in output_tokens[:input_len]], \
+            [clean_text(t) for t in output_tokens[input_len:]], \
+            session \
 
 
     @cache.memoize()
@@ -184,19 +197,19 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             if model_id not in models:
                 raise PreventUpdate
             model = models[model_id]
-        generated_output, layers, input_tok, output_tok, session_id = model_generate(text, model_id, run_config, session_id)
+        generated_output, layers, input_tok, output_tok, session_id = model_generate(
+            text, model_id, run_config, session_id
+        )
 
         norm = get_normalization(model_id, norm_id)
 
-        text = decode_layers(layers=layers, strategy=strategy, norm=norm, norm_id=norm_id, decoder=model.decoder, _session_id=session_id)
+        text = decode_layers(
+            layers=layers, strategy=strategy, norm=norm, norm_id=norm_id,
+            decoder=model.decoder, _session_id=session_id
+        )
         p = compute_probabilities(
-            layers=layers,
-            strategy=strategy,
-            residual_contribution=residual_contribution,
-            norm=norm,
-            norm_id=norm_id,
-            decoder=model.decoder,
-            _session_id=session_id,
+            layers=layers, strategy=strategy, residual_contribution=residual_contribution,
+            norm=norm, norm_id=norm_id, decoder=model.decoder, _session_id=session_id,
         )
 
         dfs = {
@@ -337,12 +350,16 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         if not ctx.triggered_id:
             raise PreventUpdate
         run_config["max_new_tok"] = max_new_tok
-        
+
         if "type" in ctx.triggered_id:
             if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
                 close_button_id = ctx.triggered_id["index"]
                 run_config["injects"] = [inj for inj in run_config["injects"] if inj["id"] != close_button_id]
-            if ctx.triggered_id["type"] == "add_inj_button" and not all(v is None for v in inj_button) and custom_emb and custom_emb_location and custom_decoding:
+            if ctx.triggered_id["type"] == "add_inj_button" and \
+                    not all(v is None for v in inj_button) and \
+                    custom_emb and \
+                    custom_emb_location and \
+                    custom_decoding:
                 run_config["injects"] = run_config["injects"] + [{
                     "id": card_id,
                     "text": custom_emb[0],
@@ -468,7 +485,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         prevent_initial_call=True,
     )
     def call_model_generate(initial_callbacks, _, text, model_id, run_config, vis_config):
-        initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
+        initial_callbacks = process_initial_call(initial_callbacks) \
+            if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
         session_id = str(uuid.uuid4())
 
         try:
@@ -537,7 +555,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         norm = get_normalization(model_id, vis_config["norm"])
 
         # Retrieve model outputs
-        generated_output, layers, input_tok, output_tok, session_id = model_generate(text, model_id, run_config, session_id)
+        generated_output, layers, input_tok, output_tok, session_id = model_generate(
+            text, model_id, run_config, session_id
+        )
 
         # Compute secondary tokens
         text = decode_layers(
@@ -548,15 +568,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         # Compute probabilities
         p = compute_probabilities(
-            layers=layers,
-            strategy=vis_config["strategy"],
-            residual_contribution=vis_config["res_contrib"],
-            norm=norm, norm_id=vis_config["norm"],
-            decoder=model.decoder,
-            _session_id=session_id,
+            layers=layers, strategy=vis_config["strategy"], residual_contribution=vis_config["res_contrib"],
+            norm=norm, norm_id=vis_config["norm"], decoder=model.decoder, _session_id=session_id,
         )
         p = extract_key_from_processed_layers(p, tab_vis_config["colour"])
-        p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
+        p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) \
+            if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
 
         # Remove first column from visualization
         if tab_vis_config["hide_start"]:
@@ -611,17 +628,19 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         )
 
         fig.add_shape(
-            x0=input_len - 1.5 + offset, x1=input_len - 1.5 + offset, y0=-1, y1=0.5, line_width=8, line_color="white"
-        )
-        fig.add_shape(
-            x0=input_len - 1.5 + offset, x1=input_len - 1.5 + offset, y0=-1, y1=0.5, line_width=2, line_color="#9C84D4"
-        )
-        fig.add_shape(
-            x0=input_len - 2.5 + offset, x1=input_len - 2.5 + offset, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
             line_width=8, line_color="white"
         )
         fig.add_shape(
-            x0=input_len - 2.5 + offset, x1=input_len - 2.5 + offset, y0=0.5, y1= model.model_config.num_hidden_layers + 1.5,
+            x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
+            line_width=2, line_color="#9C84D4"
+        )
+        fig.add_shape(
+            x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
+            line_width=8, line_color="white"
+        )
+        fig.add_shape(
+            x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
             line_width=2, line_color="#9C84D4"
         )
 
@@ -670,7 +689,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 )
         # Cell selector
         if vis_config["x"] is not None and vis_config["y"] is not None:
-            
             fig.add_shape(
                 x0=vis_config["x"] + offset - 0.5, x1=vis_config["x"] + offset - 1.5,
                 y0=vis_config["y"] - 0.5, y1=vis_config["y"] + 0.5,
@@ -710,17 +728,23 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             x, y = vis_config["x"], vis_config["y"]
 
         sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
-        
+
         dfs, linkinfo, input_len, output_len = generate_sankey_info(
-            text, model_id, run_config, session_id, vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"]
+            text, model_id, run_config, session_id,
+            vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"]
         )
 
         row_limit = sankey_param.rowlimit
-        sankey_param.rowlimit = row_limit if sankey_param.row_index - row_limit - 1 >= 0 or sankey_param.row_index == 0 else sankey_param.row_index
+        sankey_param.rowlimit = row_limit \
+            if sankey_param.row_index - row_limit - 1 >= 0 or sankey_param.row_index == 0 \
+            else sankey_param.row_index
 
         if sankey_vis_config["hide_start"]:
             dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
-            linkinfo = {key: [layer[1:] if layer is not None else None for layer in link] for key, link in linkinfo.items()}
+            linkinfo = {
+                key: [layer[1:] if layer is not None else None for layer in link] 
+                for key, link in linkinfo.items()
+            }
             linkinfo["attentions"] = [[
                 (layer2[1:] / layer2[1:].sum()) if sankey_vis_config["reapport_start"] else layer2[1:]
                 for layer2 in layer1
@@ -772,7 +796,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     )
     def update_model(initial_callbacks, model_id, model_info):
         nonlocal models
-        initial_callbacks = process_initial_call(initial_callbacks) if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
+        initial_callbacks = process_initial_call(initial_callbacks) \
+            if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
 
         if not model_id:
             return initial_callbacks, no_update, no_update, no_update, False, no_update
@@ -783,11 +808,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 try:
                     model = ModelUtils(ModelInfo(**model_info), hf_token=os.environ["HF_TOKEN"])
                     if model.model is None:
-                        return initial_callbacks, "", {}, "Out of memory while loading model", True, no_update
+                        return initial_callbacks, "", {}, \
+                            "Out of memory while loading model", True, no_update
                     models |= {model_id: model}
-                except RuntimeError as e:
+                except RuntimeError as _:
                     return initial_callbacks, "", {}, "No NVIDIA Driver found", True, no_update
-                except Exception as e:   
+                except Exception as _:   
                     return initial_callbacks, "", {}, "Error while loading model", True, no_update
         return initial_callbacks, model_id, model_info, no_update, False, True
 
@@ -890,7 +916,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             cur = time.time()
             # TODO: Consider if it's necessary to separate the check-dead callback from the heartbeat callback
             # Delete models with expired timestamp while avoid deleting model of current session
-            dead = [mid for mid, model in models.items() if cur - model.heartbeat_stamp > HEARTBEAT_TIMEOUT and mid != model_id]
+            dead = [
+                mid
+                for mid, model in models.items()
+                if cur - model.heartbeat_stamp > HEARTBEAT_TIMEOUT and mid != model_id
+            ]
             if dead:
                 for mid in dead:
                     del models[mid]

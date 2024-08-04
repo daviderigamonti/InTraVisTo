@@ -1,0 +1,19 @@
+[MASTER]
+init-hook = "import sys; sys.path.append('src'); sys.path.append('submodules/transformer_wrappers/src')"
+
+[MESSAGES CONTROL]
+disable = C0114, C0115, C0116, C0302, R0913, R0914, R0915, W0401, W0614, W0718
+# C0114: missing-module-docstring
+# C0115: missing-class-docstring
+# C0116: missing-function-docstring
+# C0302: too-many-lines
+# R0913: too-many-arguments
+# R0914: too-many-locals
+# R0914: too-many-locals
+# R0915: too-many-statements
+# W0401: wildcard-import
+# W0614: unused-wildcard-import
+# W0718: broad-exception-caught
+
+[FORMAT]
+max-line-length = 120

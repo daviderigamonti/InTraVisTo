@@ -1,9 +1,9 @@
 import dataclasses
 import json
 
-from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
-from models import ModelInfo, NormalizationStep
-from sankey import AttentionHighlight, SizeAdapt
+from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+from utils.models import ModelInfo, NormalizationStep
+from utils.sankey import AttentionHighlight, SizeAdapt
 
 
 def get_label_type_map(type_map, value):

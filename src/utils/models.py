@@ -15,7 +15,7 @@ import torch
 
 from transformer_wrappers.wrappers import InjectCausalLMWrapper# pylint:disable=E0401,E0611
 
-from utils import Decoder
+from utils.utils import Decoder
 
 
 class NormalizationStep(str, Enum):

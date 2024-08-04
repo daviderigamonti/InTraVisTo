@@ -6,7 +6,7 @@ from dash import Dash
 import diskcache
 import dash_bootstrap_components as dbc
 
-from app.constants import *  # pylint:disable=W0401,W0614
+from app.constants import *
 from app.callbacks import generate_callbacks
 from app.layout import generate_layout
 

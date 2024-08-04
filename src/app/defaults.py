@@ -2,10 +2,10 @@ import dataclasses
 
 import plotly.graph_objects as go
 
-from utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
-from models import ModelInfo, NormalizationStep
-from sankey import SankeyParameters, SizeAdapt, AttentionHighlight
-from app.constants import *  # pylint:disable=W0401,W0614
+from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+from utils.models import ModelInfo, NormalizationStep
+from utils.sankey import SankeyParameters, SizeAdapt, AttentionHighlight
+from app.constants import *
 
 
 DEFAULT_EMB_TYPE = EmbeddingsType.BLOCK_OUTPUT
@@ -18,7 +18,7 @@ DEFAULT_ATTENTION = AttentionHighlight.TOP_K
 DEFAULT_ATT_HIGH_K = 1
 DEFAULT_ATT_HIGH_W = 0.001
 
-DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
+DEFAULT_QUESTION = "a"
 DEFAULT_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
 DEFAULT_MODEL = ModelInfo(DEFAULT_MODEL_ID, CUDA_DEVICE, True)
 
