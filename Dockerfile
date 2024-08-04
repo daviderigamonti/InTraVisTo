@@ -20,4 +20,4 @@ ENV HOST 0.0.0.0
 
 EXPOSE 8892
 
-CMD [ "python", "./InTraVisTo.py" ]
+CMD [ "python", "./src/InTraVisTo.py" ]

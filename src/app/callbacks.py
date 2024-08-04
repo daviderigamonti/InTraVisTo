@@ -39,7 +39,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     #       argument of cache.memoize
     @cache.memoize(ignore={"layers", "decoder", "norm"})
     def decode_layers(
-        *args, layers, strategy: str, norm, norm_id: str, decoder: Decoder, _session_id: str
+        *args, layers, strategy: str, norm, norm_id: str, decoder: Decoder, _session_id: str # pylint:disable=unused-argument
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
@@ -50,7 +50,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     @cache.memoize(ignore={"layers", "decoder", "norm"})
     def compute_probabilities(
         *args, layers, strategy: str, residual_contribution: ResidualContribution,
-        norm, norm_id: str, decoder: Decoder, _session_id: str
+        norm, norm_id: str, decoder: Decoder, _session_id: str  # pylint:disable=unused-argument
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in compute_probabilities function {args}")
@@ -419,7 +419,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         prevent_initial_call=True,
     )
     def update_sankey_vis_config(
-        _, vis_config, row_limit, reapport_start, hide_start, att_high_k, att_high_w, att_select, hide_labels,
+        _, vis_config, row_limit, reapport_start, hide_start,
+        att_high_k, att_high_w, att_select, hide_labels, # pylint:disable=unused-argument
         font_size, size_adapt, sankey_vis_config
     ):
         token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
@@ -742,7 +743,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         if sankey_vis_config["hide_start"]:
             dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
             linkinfo = {
-                key: [layer[1:] if layer is not None else None for layer in link] 
+                key: [layer[1:] if layer is not None else None for layer in link]
                 for key, link in linkinfo.items()
             }
             linkinfo["attentions"] = [[
@@ -802,7 +803,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         if not model_id:
             return initial_callbacks, no_update, no_update, no_update, False, no_update
 
-        # A dedicated lock is used since we are interested in model loading being exclusive only with othere instances of itself
+        # A dedicated lock is used since we are interested in model loading
+        # being exclusive only with othere instances of itself
         with model_loading_lock:
             if model_id not in models:
                 try:
@@ -813,7 +815,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     models |= {model_id: model}
                 except RuntimeError as _:
                     return initial_callbacks, "", {}, "No NVIDIA Driver found", True, no_update
-                except Exception as _:   
+                except Exception as _:
                     return initial_callbacks, "", {}, "Error while loading model", True, no_update
         return initial_callbacks, model_id, model_info, no_update, False, True
 
@@ -827,7 +829,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         [
             Input("generation_notify", "data"),
-            Input("main_graph", "clickData"), # Click data handler (only one, others are updated through click_data_store)
+            # Click data handler (only one, others are updated through click_data_store)
+            Input("main_graph", "clickData"),
         ],
         [
             State("table_scroll", "data"),
@@ -953,7 +956,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         run_config |= {"injects": []}
         return model.model_config.num_hidden_layers, run_config
 
-    
+
     # Layout callbacks
 
     @app.callback(
@@ -991,14 +994,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         [
             Input("attention_select", "value"),
-            Input("att_high_k", "className"),
         ],
     )
-    def update_attention_layout(attention_select ,a):
+    def update_attention_layout(attention_select):
         _parameter_order = ["att_high_k", "att_high_w"]
         styles = [
             {"display": "flex"} if attention_select == p_key else {"display": "none"}
-            for p in _parameter_order if (p_key := next(k for k, v in ATTENTION_ID_MAP.items() if v == p)) and True
+            for p in _parameter_order
+            if (p_key := next(k for k, v in ATTENTION_ID_MAP.items() if v == p)) and True  # pylint:disable=simplifiable-condition
         ]
         return styles
 

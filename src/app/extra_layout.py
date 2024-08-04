@@ -1,9 +1,9 @@
-from dash import html, dcc
+from dash import html
 
 import dash_bootstrap_components as dbc
 
-from app.constants import * # pylint:disable=W0401,W0614
-from app.defaults import * # pylint:disable=W0401,W0614
+from app.constants import *
+from app.defaults import *
 
 # TODO: fix css
 def generate_tooltip_children_layout(layer: int = -1, token: int = -1):

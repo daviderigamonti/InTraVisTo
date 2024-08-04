@@ -1,13 +1,11 @@
 from dataclasses import dataclass, field
 from collections import defaultdict
-from itertools import cycle
 from enum import Enum
 
 import heapq
 import math
 
 import plotly.graph_objects as go
-import plotly.express as px
 import numpy as np
 
 
@@ -44,10 +42,6 @@ class SankeyParameters:
     rowlimit: int = 5  # Limit number of layers to visualize
     multirep: bool = True  # Accomodate for each token having multiple labels
     # COLORS
-    colormap: list[str, ...] = field(default_factory=lambda: ["#206DE8"])  # Colors
-    # colormap: list[str, ...] = field( default_factory = lambda : px.colors.qualitative.Plotly )
-    color_change_count_threshold: int = 3  # Number of virtual rows that should have the same color associated to them
-    color_brightness_range: tuple[float, float] = (-0.5, 0.2)  # Brightness range for tokens color gradient
     node_opacity: float = 0.7  # Opacity of nodes
     link_opacity: float = 0.5  # Opacity of links
     node_color_map: dict[str, float] = field(
@@ -71,7 +65,6 @@ class SankeyParameters:
             "ff_out": (224, 31, 92),
         }
     )
-    color_nodes: bool = False  # If set to true, color nodes based on the colormap, otherwise all nodes will have their default color
     attention_opacity: float = 0.0
     # LAYOUT
     print_indexes: bool = False
@@ -88,12 +81,13 @@ class SankeyParameters:
 
 def cumulative_sankey_traces(
     dfs, linkinfo,            # Dataframes and link info to access labels and node hidden information
-    row, indexes, el_indexes, # Dataframe is indexed by index and row, while el_index references the index for sankey visualization
+    # Dataframe is indexed by index and row, while el_index references the index for sankey visualization
+    row, indexes, el_indexes,
     bases,                    # Base attention value of parents
     labels,                   # Current set of labels for sankey visualization
     # Reference for duplicate nodes as a dictionary indexed with (row, index) and containing a dictionary composed of
+    # an id and a base
     elmap,
-                              #  an id and a base
     rowlimit,                 # Depth limit
     firstcall=True,           # Identify if it's the original function call
 ):
@@ -132,7 +126,7 @@ def cumulative_sankey_traces(
         if not norm_layer:
             # Iterate over all elements of the next row
             for i, label in enumerate(dfs["states"][row-1]):
-                v = (base * attn_w * linkinfo["attentions"][row-1][index][i].item())
+                v = base * attn_w * linkinfo["attentions"][row-1][index][i].item()
                 if v > 0:
                     over.append(attn_index)
                     # If node is already present store its information
@@ -272,7 +266,11 @@ def rescale_list(l, range_min=0, range_max=1, old_min=None, old_max=None, invert
         invert_k = old_range
         invert_a = -1
 
-    return [el if el is None else range_min + (((invert_k + (invert_a * (el - old_min))) * new_range) / old_range) for el in l]
+    return [
+        el if el is None else \
+            range_min + (((invert_k + (invert_a * (el - old_min))) * new_range) / old_range)
+        for el in l
+    ]
 
 # Given a list and a list of indexes that have been previously sorted, restore the original order of the list
 def restore_list_order(l, indexes):
@@ -321,7 +319,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     if sankey_parameters.attention_select == AttentionHighlight.ALL:
         for el_ov, el_un, typ, value in zip(ov, un, types, vl):
             if typ == "att_in":
-                max_att_list[el_ov].append((value, el_un))       
+                max_att_list[el_ov].append((value, el_un))
     elif sankey_parameters.attention_select == AttentionHighlight.MIN_WEIGHT:
         for el_ov, el_un, typ, value in zip(ov, un, types, vl):
             if typ == "att_in":
@@ -335,7 +333,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
                 if len(max_att_list[el_ov]) > sankey_parameters.attention_highlight:
                     heapq.heappop(max_att_list[el_ov])
     max_att_list = {
-        el_ov: [tup[1] for tup in max_att_list[el_ov]] 
+        el_ov: [tup[1] for tup in max_att_list[el_ov]]
         for el_ov, typ in zip(ov, types) if typ == "att_in"
     }
 
@@ -353,8 +351,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     revmap_y = [key[1] for key in revmap]
     # Sort reverse-mapped lists to perform transformations on them with more ease,
     # while keeping an index list to reverse the sorting
-    revmap_indexes = [i for i in range(0, len(revmap))]
-    revmap_x_sort, revmap_y_sort, revmap_values_sort, revmap_indexes = zip(
+    revmap_indexes = list(range(0, len(revmap)))
+    _, revmap_y_sort, revmap_values_sort, revmap_indexes = zip(
         *sorted(zip(revmap_x, revmap_y, revmap_values, revmap_indexes), key=lambda x: x[0]))
 
     # Add kl divergence values to residual links between consecutive layers
@@ -364,7 +362,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         for typ, el in zip(types, un)
     ]
 
-    def format_kl(x):                                                                                                                                                                                   
+    def format_kl(x):
         i = 0
         udm = ["", "m", "μ", "n", "p"]
         while x < 0.1 and i < len(udm) - 1:
@@ -377,35 +375,13 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         for l, kl in zip(links_extra, kl_values)
     ]
 
-    # Build colors
-    node_colors = []
-    node_colors_ref = []
-    link_colors = []
-    colormap = cycle(sankey_parameters.colormap)
-    current_color = next(colormap)
-    old_x = -1
-    change_count = sankey_parameters.color_change_count_threshold
-    color_brightness_range = sankey_parameters.color_brightness_range
     # Node colors
-    for x, y, v in zip(revmap_y_sort, rescale_list(revmap_x_sort, range_min=color_brightness_range[0], range_max=color_brightness_range[1], invert=False), revmap_values_sort):
-        # Color switching
-        if x != old_x:
-            if change_count > sankey_parameters.color_change_count_threshold:
-                current_color = next(colormap)
-                change_count = 0
-            change_count += 1
-        color_ref = change_color_brightness(px.colors.hex_to_rgb(current_color), y)
-        node_colors_ref.append(color_ref)
-        color = px.colors.hex_to_rgb(current_color) if sankey_parameters.color_nodes else sankey_parameters.node_color_map[v["type"]]
-        node_colors.append(color)
-        old_x = x
-    node_colors = restore_list_order(node_colors, revmap_indexes)
-    node_colors_ref = restore_list_order(node_colors_ref, revmap_indexes)
+    node_colors = [sankey_parameters.node_color_map[v["type"]] for v in revmap_values]
 
     # Link colors
     link_colors = []
     np_kl_values = np.array(kl_values)
-    kl_mask = np_kl_values == None
+    kl_mask = np_kl_values == None # pylint:disable=singleton-comparison
     sort_kl_values = np.argsort(np_kl_values[~kl_mask]).tolist()
     i = -1
     std_kl_values = [
@@ -413,7 +389,9 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         for m in kl_mask
         if m or (i := i + 1) or True
     ]
-    for typ, el, el_ov, kl in zip(types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.3, range_max=1.1)):
+    for typ, el, el_ov, kl in zip(
+        types, un, ov, rescale_list(std_kl_values, invert=True, range_min=-0.3, range_max=1.1)
+    ):
         color = sankey_parameters.link_color_map[typ].copy()
         # Color residuals according to difference of kl divergence
         if kl is not None:
@@ -465,14 +443,15 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     ]
 
     if sankey_parameters.size_adapt == SizeAdapt.LAYER:
-        size = (sankey_parameters.size / 2) + (sankey_parameters.size / 10) * (sankey_parameters.row_index - sankey_parameters.rowlimit)
+        size = (sankey_parameters.size / 2) + \
+            (sankey_parameters.size / 10) * (sankey_parameters.row_index - sankey_parameters.rowlimit)
     elif sankey_parameters.size_adapt == SizeAdapt.TOKEN:
         size = (sankey_parameters.size / 2) + (sankey_parameters.size / 22) * l
     else:
         size = sankey_parameters.size
 
     hovertemplates = [
-        (le["name"] + " from " + lab[un_el] + " to " + lab[ov_el] + "<br>" + le["kl_diff"] + f"<extra>{le['v']:.1%}</extra>")
+        f"{le['name']} from {lab[un_el]} to {lab[ov_el]}<br>{le['kl_diff']}<extra>{le['v']:.1%}</extra>"
         if (le["type"] not in ["att_in"] or un_el in max_att_list[ov_el]) else "<extra></extra>"
         for le, un_el, ov_el in zip(links_extra, un, ov)
     ]

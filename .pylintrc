@@ -2,11 +2,12 @@
 init-hook = "import sys; sys.path.append('src'); sys.path.append('submodules/transformer_wrappers/src')"
 
 [MESSAGES CONTROL]
-disable = C0114, C0115, C0116, C0302, R0913, R0914, R0915, W0401, W0614, W0718
+disable = C0114, C0115, C0116, C0302, R0912, R0913, R0914, R0915, W0401, W0614, W0718
 # C0114: missing-module-docstring
 # C0115: missing-class-docstring
 # C0116: missing-function-docstring
 # C0302: too-many-lines
+# R0912: too-many-branches
 # R0913: too-many-arguments
 # R0914: too-many-locals
 # R0914: too-many-locals

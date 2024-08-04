@@ -18,7 +18,7 @@ DEFAULT_ATTENTION = AttentionHighlight.TOP_K
 DEFAULT_ATT_HIGH_K = 1
 DEFAULT_ATT_HIGH_W = 0.001
 
-DEFAULT_QUESTION = "a"
+DEFAULT_QUESTION = "Q: What is the capital of Italy? A:"
 DEFAULT_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
 DEFAULT_MODEL = ModelInfo(DEFAULT_MODEL_ID, CUDA_DEVICE, True)
 

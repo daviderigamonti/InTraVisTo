@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from typing import List
 from enum import Enum
 
-import inspect
 import time
 import gc
 
@@ -13,7 +12,7 @@ from transformers import AutoTokenizer
 import transformers
 import torch
 
-from transformer_wrappers.wrappers import InjectCausalLMWrapper# pylint:disable=E0401,E0611
+from transformer_wrappers.wrappers import InjectCausalLMWrapper
 
 from utils.utils import Decoder
 
@@ -62,7 +61,8 @@ class LayerNormalizationWrapper:
     def __init__(
         self,
         norm: torch.nn.Module,
-        rescale_info: List[dict] = None, # List of dictionaries of the form {"name": attribute name, "reset": function to use in order to reset value}
+        # List of dictionaries of the form {"name": attribute name, "reset": function to use in order to reset value}
+        rescale_info: List[dict] = None,
         status: NormalizationStep = NormalizationStep.NORM_SCALE
     ):
         self.norm = norm
@@ -111,7 +111,7 @@ class ModelUtils:
             bnb_4bit_use_double_quant=True,
             bnb_4bit_compute_dtype=bfloat16,
         ) if quant else None
-        model_config = transformers.AutoConfig.from_pretrained(
+        model_hf_config = transformers.AutoConfig.from_pretrained(
             model_id,
             output_attentions=True,
             output_hidden_states=True,
@@ -128,14 +128,13 @@ class ModelUtils:
             prefix_tokens = tokenizer.encode("9", add_special_tokens=False, return_tensors="pt").to(device).flatten()
             prefix_tokens = prefix_tokens[0] if prefix_tokens.size(dim=0) > 1 else torch.tensor([]).to(device)
 
-            MODEL_CONFIG = {
+            model_config = {
                 "trust_remote_code": True,
                 "device_map": device,
                 "token": hf_token,
                 "torch_dtype": bfloat16,
             }
-
-            TOKENIZER_CONFIG = {
+            tokenizer_config = {
                 "token": hf_token,
             }
 
@@ -143,9 +142,9 @@ class ModelUtils:
             while True:
                 try:
                     model = InjectCausalLMWrapper.from_pretrained(
-                        model_id, model_kwargs=MODEL_CONFIG,
+                        model_id, model_kwargs=model_config,
                         quantization_configs=quant_config,
-                        tokenizer_name_or_path=model_id, tokenizer_kwargs=TOKENIZER_CONFIG,
+                        tokenizer_name_or_path=model_id, tokenizer_kwargs=tokenizer_config,
                     )
                     model.enable_wrapper()
                     break
@@ -160,14 +159,17 @@ class ModelUtils:
                     if tries <= 0:
                         print(f"Could not load {model_id}")
                         return None, None, None, None, None
-                    print(f"Out of Memory while loading {model_id}, {tries} attempt(s) left, next attempt in {try_timeout} seconds")
+                    print(
+                        f"Out of Memory while loading {model_id}, {tries} attempt(s) left, \
+                            next attempt in {try_timeout} seconds"
+                    )
 
                     time.sleep(try_timeout)
 
-            decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_config)
+            decoder = Decoder(model=model, tokenizer=tokenizer, model_config=model_hf_config)
 
         except RuntimeError as e:
             print(f"Could not load {model_id}")
             raise e
 
-        return tokenizer, model, model_config, decoder, prefix_tokens
+        return tokenizer, model, model_hf_config, decoder, prefix_tokens

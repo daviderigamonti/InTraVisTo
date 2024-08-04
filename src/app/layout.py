@@ -2,8 +2,8 @@ from dash import html, dcc
 
 import dash_bootstrap_components as dbc
 
-from app.constants import *  # pylint:disable=W0401,W0614
-from app.defaults import * # pylint:disable=W0401,W0614
+from app.constants import *
+from app.defaults import *
 
 
 def generate_layout():
@@ -27,7 +27,10 @@ def generate_layout():
                 dbc.Tab(dbc.Card(dbc.CardBody([
                     html.Div(children=[
                         dbc.Spinner(
-                            dcc.Graph(figure=DEFAULT_FIGURE, id="main_graph", className="spinner-visible-element", config={"displaylogo": False}),
+                            dcc.Graph(
+                                figure=DEFAULT_FIGURE, id="main_graph",
+                                className="spinner-visible-element", config={"displaylogo": False}
+                            ),
                             spinner_class_name="spinner-graph", color="primary"
                         ),
                     ], id="scrollable_graph", className="scrollable-div"),
@@ -44,7 +47,10 @@ def generate_layout():
                     html.Hr(),
                     html.Div(children=[
                         dbc.Spinner(
-                            dcc.Graph(figure=DEFAULT_FIGURE, id="sankey_graph", className="spinner-visible-element", config={"displaylogo": False}), 
+                            dcc.Graph(
+                                figure=DEFAULT_FIGURE, id="sankey_graph",
+                                className="spinner-visible-element", config={"displaylogo": False}
+                            ),
                             spinner_class_name="spinner-graph", color="primary"
                         ),
                     ], id="scrollable_sankey", className="biscrollable-div"),
@@ -54,7 +60,6 @@ def generate_layout():
             dcc.Interval(id="model_heartbeat", interval=HEARTBEAT_INTERVAL * 1000),
         ], className="container-fluid pt-2"),
         html.Div([], id="overlay", className="overlay"),
-        
         html.Div([], id="javascript_inject", style={"display": "none"}),
         html.Div(id="scrollable_table_js_store", children=0, style={"display": "none"}),
     ])
@@ -95,7 +100,7 @@ def _generation():
             ], className="col-md-auto"),
             dbc.Alert(
                 ["Error during generation"],
-                id="model_generate_alert", 
+                id="model_generate_alert",
                 color="danger", dismissable=True, fade=True, is_open=False,
             ),
         ], className="d-flex align-items-center"),
@@ -163,7 +168,7 @@ def _settings():
                             ),
                             dbc.Alert(
                                 ["Error while loading model"],
-                                id="model_select_alert", 
+                                id="model_select_alert",
                                 color="danger", dismissable=True, fade=True, is_open=False,
                             ),
                         ], className="gy-2")

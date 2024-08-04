@@ -30,12 +30,12 @@ class ResidualContribution(str, Enum):
     KL_DIV = "kl_divergence"
 
 
-def _res_contrib_norm(residual, x, embs, **kwargs):
+def _res_contrib_norm(residual, x, embs, **kwargs): # pylint:disable=unused-argument
     return (
         embs[residual].norm(2, dim=-1) / (embs[residual].norm(2, dim=-1) + embs[x].norm(2, dim=-1))
     ).squeeze().detach().float().cpu()
 
-def _res_contrib_kl_div(residual, x, ref, embs, norm, **kwargs):
+def _res_contrib_kl_div(residual, x, ref, embs, norm, **kwargs): # pylint:disable=unused-argument
     emb_ref = norm(embs[ref])
     emb_res = norm(embs[residual])
     emb_x = norm(embs[x])
@@ -53,7 +53,9 @@ def _res_contrib_kl_div(residual, x, ref, embs, norm, **kwargs):
 
 # TODO: make more efficient/general
 def clean_text(t):
-    return repr( chr(int(t[3:-1], 16)) if re.match(r"<0x\w\w>", t) else t )[1:-1].replace("\u0120", "_").replace("\u010a", "\\n")
+    return repr( chr(int(t[3:-1], 16)) if re.match(r"<0x\w\w>", t) else t )[1:-1] \
+        .replace("\u0120", "_") \
+        .replace("\u010a", "\\n")
 
 
 DEFAULT_SESSION_ID = "0"
@@ -294,7 +296,8 @@ class Decoder:
         res[ProbabilityType.ENTROPY] = entropy
         res[ProbabilityType.ARGMAX] = argmax
         att_res_percent = torch.tensor(0.0) \
-            if EmbeddingsType.BLOCK_INPUT not in cell.embeddings or EmbeddingsType.POST_ATTENTION not in cell.embeddings \
+            if EmbeddingsType.BLOCK_INPUT not in cell.embeddings \
+                or EmbeddingsType.POST_ATTENTION not in cell.embeddings \
             else RESIDUAL_CONTRIBUTION[residual_contribution](
                 residual=EmbeddingsType.BLOCK_INPUT,
                 x=EmbeddingsType.POST_ATTENTION,
@@ -305,7 +308,8 @@ class Decoder:
         res |= {ProbabilityType.ATT_RES_PERCENT: att_res_percent}
 
         ffnn_res_percent = torch.tensor(0.0) \
-            if EmbeddingsType.POST_ATTENTION_RESIDUAL not in cell.embeddings or EmbeddingsType.POST_FF not in cell.embeddings \
+            if EmbeddingsType.POST_ATTENTION_RESIDUAL not in cell.embeddings \
+                or EmbeddingsType.POST_FF not in cell.embeddings \
             else RESIDUAL_CONTRIBUTION[residual_contribution](
                 residual=EmbeddingsType.POST_ATTENTION_RESIDUAL,
                 x=EmbeddingsType.POST_FF,
