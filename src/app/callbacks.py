@@ -39,11 +39,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     #       argument of cache.memoize
     @cache.memoize(ignore={"layers", "decoder", "norm"})
     def decode_layers(
-        *args, layers, strategy: str, norm, norm_id: str, decoder: Decoder, _session_id: str # pylint:disable=unused-argument
+        *args, layers, strategy: str, norm, norm_id: str, secondary_decoding: str, # pylint:disable=unused-argument
+        decoder: Decoder, _session_id: str
     ):
         if args:
             raise TypeError(f"Found positional argument(s) in decode_layers function {args}")
-        return decoder.decode(layers, decoding=strategy, norm=norm)
+        return decoder.decode(layers, decoding=strategy, norm=norm, secondary_decoding=secondary_decoding)
 
     # Note: Every argument should be called as a key-value argument, otherwise it bypasses the "ignore"
     #       argument of cache.memoize
@@ -192,7 +193,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
 
     @cache.memoize()
-    def generate_sankey_info(text, model_id, run_config, session_id, strategy, residual_contribution, norm_id):
+    def generate_sankey_info(
+        text, model_id, run_config, session_id, strategy, residual_contribution, norm_id, secondary_decoding
+        ):
         with models_lock:
             if model_id not in models:
                 raise PreventUpdate
@@ -205,7 +208,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         text = decode_layers(
             layers=layers, strategy=strategy, norm=norm, norm_id=norm_id,
-            decoder=model.decoder, _session_id=session_id
+            secondary_decoding=secondary_decoding, decoder=model.decoder, _session_id=session_id
         )
         p = compute_probabilities(
             layers=layers, strategy=strategy, residual_contribution=residual_contribution,
@@ -224,8 +227,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # Add labels for differences between consecutive layers
         diffs = [layers[i].get_diff(layers[i-1]) for i in range(1, len(layers))]
         token_diffs = decode_layers(
-            layers=diffs, strategy=strategy, norm=norm, norm_id=norm_id, decoder=model.decoder,
-            _session_id=session_id + DASH_SESSION_DIFF_GEN
+            layers=diffs, strategy=strategy, norm=norm, norm_id=norm_id, secondary_decoding=secondary_decoding,
+            decoder=model.decoder, _session_id=session_id + DASH_SESSION_DIFF_GEN
         )
         linkinfo["diff"] = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
@@ -379,6 +382,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             Input("choose_decoding", "value"),
             Input("choose_res_type", "value"),
             Input("norm_emb", "value"),
+            Input("secondary_decoding", "value")
         ],
         [
             State("hide_start_table", "value"),
@@ -386,7 +390,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         prevent_initial_call=True,
     )
-    def update_vis_config(_, click_data, strategy, res_contrib, norm, hide_start_table, vis_config):
+    def update_vis_config(
+        _, click_data, strategy, res_contrib, norm, secondary_decoding, hide_start_table, vis_config
+        ):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
         col_0_offset = 1 if len(hide_start_table) > 0 else 0
         vis_config |= {"x": click_data["points"][0]["x"] + col_0_offset} if click_data else {"x": None}
@@ -394,6 +400,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         vis_config |= {"strategy": strategy}
         vis_config |= {"res_contrib": res_contrib}
         vis_config |= {"norm": norm}
+        vis_config |= {"secondary_decoding": secondary_decoding}
         if ctx.triggered_id == "generation_notify":
             vis_config |= {"x": None, "y": None}
         return vis_config
@@ -505,7 +512,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             norm = get_normalization(model_id=model_id, norm=vis_config["norm"])
             _ = decode_layers(
                 layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
-                decoder=model.decoder, _session_id=session_id
+                secondary_decoding=vis_config["secondary_decoding"], decoder=model.decoder, _session_id=session_id
             )
             _ = compute_probabilities(
                 layers=layers,
@@ -563,7 +570,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # Compute secondary tokens
         text = decode_layers(
             layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
-            decoder=model.decoder, _session_id=session_id
+            secondary_decoding=vis_config["secondary_decoding"], decoder=model.decoder, _session_id=session_id
         )
         text = extract_key_from_processed_layers(text, tab_vis_config["emb_type"])
 
@@ -604,7 +611,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
             "<br><b>Layer</b>: %{y}" +
             "<br><b>Token position</b>: %{x}" +
-            "<br><b>Top-5 tokens</b>: %{text}" +
+            "<br><b>" + SECONDARY_DECODING_TEXT[vis_config["secondary_decoding"]] + "</b>: %{text}" +
             "<extra></extra>",
             texttemplate="%{text[0]}",
             textfont={"size": tab_vis_config["font_size"]},
@@ -732,7 +739,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         dfs, linkinfo, input_len, output_len = generate_sankey_info(
             text, model_id, run_config, session_id,
-            vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"]
+            vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"], vis_config["secondary_decoding"],
         )
 
         row_limit = sankey_param.rowlimit

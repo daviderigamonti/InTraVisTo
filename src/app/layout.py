@@ -202,6 +202,17 @@ def _settings():
                     ]),
                 ], className="my-2 mx-1 my-1 d-flex align-items-center"),
                 dbc.Row([
+                    dbc.Col(["Secondary token decoding:"], className="col-md-auto"),
+                    dbc.Col([
+                        dbc.Select(
+                            id="secondary_decoding",
+                            options=SECONDARY_DECODING_MAP,
+                            value=DEFAULT_VIS_CONFIG["secondary_decoding"],
+                            className="form-select borderpx-1 w-100"
+                        ),
+                    ]),
+                ], className="my-2 mx-1 my-1 d-flex align-items-center"),
+                dbc.Row([
                     dbc.Checklist(
                         [{"label": "Hide <start> token", "value": "hide"}],
                         id="hide_start_table",
@@ -232,7 +243,7 @@ def _settings_sankey():
                     switch=True,
                 ),
                 dbc.Row([
-                    html.Div(["⤷"], className="w-5 ms-3 mb-2 pe-0"),
+                    html.Div(["⤷"], className="w-5 ms-3 mb-2 pe-1"),
                     dbc.Checklist(
                         [{"label": "Reapport weights to remaining nodes", "value": "reapport"}],
                         id="reapport_start",

@@ -1,7 +1,7 @@
 import dataclasses
 import json
 
-from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
+from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, SecondaryDecodingType
 from utils.models import ModelInfo, NormalizationStep
 from utils.sankey import AttentionHighlight, SizeAdapt
 
@@ -69,6 +69,15 @@ NORM_MAP = [
     {"label": "Normalization only", "value": NormalizationStep.ONLY_NORM},
     {"label": "Normalization with rescaling parameters", "value": NormalizationStep.NORM_SCALE},
 ]
+
+SECONDARY_DECODING_MAP = [
+    {"label": "Top-5 probability tokens", "value": SecondaryDecodingType.TOP_K},
+    {"label": "Iterative subtraction decoding", "value": SecondaryDecodingType.ITERATIVE},
+]
+SECONDARY_DECODING_TEXT = {
+    SecondaryDecodingType.TOP_K: "Top-5 tokens",
+    SecondaryDecodingType.ITERATIVE: "Secondary tokens",
+}
 
 SANKEY_SIZE_MAP = [
     {"label": "Fixed scale", "value": SizeAdapt.FIXED},

@@ -29,6 +29,10 @@ class ResidualContribution(str, Enum):
     NORM = "norm"
     KL_DIV = "kl_divergence"
 
+class SecondaryDecodingType(str, Enum):
+    TOP_K = "top_k"
+    ITERATIVE = "iterative"
+
 
 def _res_contrib_norm(residual, x, embs, **kwargs): # pylint:disable=unused-argument
     return (
@@ -51,6 +55,34 @@ def _res_contrib_kl_div(residual, x, ref, embs, norm, **kwargs): # pylint:disabl
     )
     return (kldiv_x / (kldiv_res + kldiv_x + 1e-10)).detach().float().cpu()
 
+def _iterative_decoding(
+    tokenizer, emb, decoding_matrix, normalization, max_rep: int = 5, **kwargs # pylint:disable=unused-argument
+):
+    secondary_tokens = []
+    norms = []
+    for rep in range(max_rep):
+        logits = torch.matmul(normalization(emb), decoding_matrix.T)
+        token_id = logits.argmax()
+        real_embed = decoding_matrix[token_id]
+        secondary_token = tokenizer.convert_ids_to_tokens([token_id])[0]
+        norm = torch.norm(emb)
+        # Stop prematurely if norm is too small or if norm is bigger than previous one
+        if norm <= 0.01 or (len(norms) > 0 and norm >= norms[-1]) and rep != 0:
+            break
+        # Do not add repreated tokens
+        if secondary_token not in secondary_tokens:
+            secondary_tokens.append(secondary_token)
+        norms.append(norm)
+        # Subtract the inverse to the current hidden state
+        emb = emb - real_embed
+    return [clean_text(s) for s in secondary_tokens]
+
+def _topk_decoding(tokenizer, emb, decoding_matrix, k: int = 5, **kwargs):  # pylint:disable=unused-argument
+    return [
+        clean_text(tokenizer.convert_ids_to_tokens([topk_id])[0])
+        for topk_id in torch.topk(torch.matmul(emb, decoding_matrix.T), k=k, sorted=True).indices
+    ]
+
 # TODO: make more efficient/general
 def clean_text(t):
     return repr( chr(int(t[3:-1], 16)) if re.match(r"<0x\w\w>", t) else t )[1:-1] \
@@ -62,6 +94,10 @@ DEFAULT_SESSION_ID = "0"
 RESIDUAL_CONTRIBUTION = {
     ResidualContribution.NORM: _res_contrib_norm,
     ResidualContribution.KL_DIV: _res_contrib_kl_div
+}
+SECONDARY_DECODING_STRATEGY = {
+    SecondaryDecodingType.TOP_K: _topk_decoding,
+    SecondaryDecodingType.ITERATIVE: _iterative_decoding
 }
 
 
@@ -199,11 +235,10 @@ class LayerWrapper:
         } for cell in self.cells]
 
 class Decoder:
-    def __init__(self, model, tokenizer, model_config, max_rep=5):
+    def __init__(self, model, tokenizer, model_config):
         self.tokenizer = tokenizer
         self.output_embedding = model.lm_head
         self.input_embedding = model.get_input_embeddings()
-        self.max_rep = max_rep
         self.model_config = model_config
         self.decoding_matrix = {
             DecodingType.INPUT:
@@ -232,40 +267,22 @@ class Decoder:
             for layer_n in range(0, n_layers + 1)
         )
 
-    def decode(self, layers: List[LayerWrapper], decoding: DecodingType, norm):
+    def decode(
+        self, layers: List[LayerWrapper],
+        decoding: DecodingType, secondary_decoding: SecondaryDecodingType,
+        norm
+    ):
         decoding_matrix = self.decoding_matrix[decoding]()
         return [
             [
-                {k: self._topk_decoding(emb, dm) for k, emb in cell.get_embeddings(norm).items()}
-                # {k: self._iterative_decoding(emb, dm, norm) for k, emb in cell.get_embeddings().items()}
+                {
+                    k: SECONDARY_DECODING_STRATEGY[secondary_decoding](
+                        tokenizer=self.tokenizer, emb=emb, decoding_matrix=dm, normalization=norm,
+                    )
+                    for k, emb in cell.get_embeddings(norm).items()
+                }
                 for cell in layer
             ] for layer, dm in zip(layers, decoding_matrix)
-        ]
-
-    def _iterative_decoding(self, emb, decoding_matrix, normalization):
-        secondary_tokens = []
-        norms = []
-        for rep in range(self.max_rep):
-            logits = torch.matmul(normalization(emb), decoding_matrix.T)
-            token_id = logits.argmax()
-            real_embed = decoding_matrix[token_id]
-            secondary_token = self.tokenizer.convert_ids_to_tokens([token_id])[0]
-            norm = torch.norm(emb)
-            # Stop prematurely if norm is too small or if norm is bigger than previous one
-            if norm <= 0.01 or (len(norms) > 0 and norm >= norms[-1]) and rep != 0:
-                break
-            # Do not add repreated tokens
-            if secondary_token not in secondary_tokens:
-                secondary_tokens.append(secondary_token)
-            norms.append(norm)
-            # Subtract the inverse to the current hidden state
-            emb = emb - real_embed
-        return [clean_text(s) for s in secondary_tokens]
-
-    def _topk_decoding(self, emb, decoding_matrix, k: int = 5):
-        return [
-            clean_text(self.tokenizer.convert_ids_to_tokens([topk_id])[0])
-            for topk_id in torch.topk(torch.matmul(emb, decoding_matrix.T), k=k, sorted=True).indices
         ]
 
     def compute_probabilities(

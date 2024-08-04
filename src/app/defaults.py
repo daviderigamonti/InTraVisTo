@@ -13,6 +13,7 @@ DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
 DEFAULT_NORM = NormalizationStep.NORM_SCALE
+DEFAULT_SECONDARY_DECODING = SecondaryDecodingType.TOP_K
 
 DEFAULT_ATTENTION = AttentionHighlight.TOP_K
 DEFAULT_ATT_HIGH_K = 1
@@ -37,6 +38,7 @@ DEFAULT_VIS_CONFIG = {
     "strategy": DEFAULT_DECODING,
     "res_contrib": DEFAULT_RES_TYPE,
     "norm": DEFAULT_NORM,
+    "secondary_decoding": DEFAULT_SECONDARY_DECODING,
 }
 DEFAULT_SANKEY_VIS_CONFIG = {
     "hide_start": True,
