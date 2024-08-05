@@ -65,9 +65,9 @@ ATTENTION_MAP = [
 ]
 
 NORM_MAP = [
-    {"label": "No normalization", "value": NormalizationStep.NONE},
-    {"label": "Normalization only", "value": NormalizationStep.ONLY_NORM},
-    {"label": "Normalization with rescaling parameters", "value": NormalizationStep.NORM_SCALE},
+    {"label": "No normalisation", "value": NormalizationStep.NONE},
+    {"label": "Normalisation only", "value": NormalizationStep.ONLY_NORM},
+    {"label": "Normalisation with rescaling parameters", "value": NormalizationStep.NORM_SCALE},
 ]
 
 SECONDARY_DECODING_MAP = [

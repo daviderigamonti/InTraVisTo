@@ -191,7 +191,7 @@ def _settings():
             ], className="col-2"),
             dbc.Col([
                 dbc.Row([
-                    dbc.Col(["Embedding normalization:"], className="col-md-auto"),
+                    dbc.Col(["Embedding normalisation:"], className="col-md-auto"),
                     dbc.Col([
                         dbc.Select(
                             id="norm_emb",
