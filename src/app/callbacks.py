@@ -83,27 +83,31 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             mask = ~torch.isin(inj_token, model.prefix_tokens)
             inj_token = inj_token[mask]
 
-            # TODO: multitoken embeddings are averaged by default
-            encoding = model.decoder.decoding_matrix[inject["decoding"]]()
-            # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
-            _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
-            encoding = next(encoding)
-            print("Averaged multi-tokens for embedding injection")
+            if inj_token.size()[0] > 0:
+                # TODO: multitoken embeddings are averaged by default
+                encoding = model.decoder.decoding_matrix[inject["decoding"]]()
+                # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
+                _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
+                encoding = next(encoding)
+                # Normalize embedding
+                norm = get_normalization(model_id, inject["norm"])
+                encoding = norm(encoding)
+                print("Averaged multi-tokens for embedding injection")
 
-            inject_translate = {
-                EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
-                EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
-                EmbeddingsType.POST_FF : InjectPosition.FFNN,
-                EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
-            }
-            injects.append(
-                InjectInfo(
-                    layer=inject["target_layer"],
-                    token=inject["target_token"],
-                    position=inject_translate[inject["location"]],
-                    embedding=torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
+                inject_translate = {
+                    EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
+                    EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
+                    EmbeddingsType.POST_FF : InjectPosition.FFNN,
+                    EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
+                }
+                injects.append(
+                    InjectInfo(
+                        layer=inject["target_layer"],
+                        token=inject["target_token"],
+                        position=inject_translate[inject["location"]],
+                        embedding=torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
+                    )
                 )
-            )
 
         gen_config = GenerationConfig(
             pad_token_id=model.model_config.eos_token_id,
@@ -338,6 +342,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             State({"type": "custom_emb", "index": ALL}, "value"),
             State({"type": "custom_emb_location", "index": ALL}, "value"),
             State({"type": "custom_decoding", "index": ALL}, "value"),
+            State({"type": "custom_norm", "index": ALL}, "value"),
             State("run_config", "data"),
             State("vis_config", "data"),
         ],
@@ -347,7 +352,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         max_new_tok,
         inj_button, inj_close_button,
         card_id,
-        custom_emb, custom_emb_location, custom_decoding,
+        custom_emb, custom_emb_location, custom_decoding, custom_norm,
         run_config, vis_config
     ):
         if not ctx.triggered_id:
@@ -368,6 +373,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     "text": custom_emb[0],
                     "location": custom_emb_location[0],
                     "decoding": custom_decoding[0],
+                    "norm": custom_norm[0],
                     "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
                     "target_token": vis_config["x"] if "x" in vis_config else None,
                 }]
@@ -875,16 +881,20 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             State("custom_emb", "value"),
             State("custom_emb_location", "value"),
             State("custom_decoding", "value"),
+            State("custom_norm", "value"),
         ],
         prevent_initial_call=True,
     )
-    def add_injection(button, vis_config, inject_container, custom_emb, custom_emb_location, custom_decoding):
+    def add_injection(
+        button, vis_config, inject_container, 
+        custom_emb, custom_emb_location, custom_decoding, custom_norm
+    ):
         if button is None:
             raise PreventUpdate
         target_layer = vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None
         target_token = vis_config["x"] if "x" in vis_config else None
         return inject_container + [extra_layout.generate_inject_card(
-            button, custom_emb, custom_emb_location, custom_decoding, target_layer, target_token
+            button, custom_emb, custom_emb_location, custom_decoding, custom_norm, target_layer, target_token
         )]
 
     @app.callback(
@@ -909,6 +919,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 text=inj["text"],
                 position=inj["location"],
                 decoding=inj["decoding"],
+                norm=inj["norm"],
                 token=inj["target_token"] - (1 if tab_vis_config["hide_start"] else 0),
                 layer=inj["target_layer"] + 1
             )

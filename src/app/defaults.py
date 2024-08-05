@@ -13,6 +13,7 @@ DEFAULT_DECODING = DecodingType.LINEAR
 DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
 DEFAULT_NORM = NormalizationStep.NORM_SCALE
+DEFAULT_INJ_NORM = NormalizationStep.ONLY_NORM
 DEFAULT_SECONDARY_DECODING = SecondaryDecodingType.TOP_K
 
 DEFAULT_ATTENTION = AttentionHighlight.TOP_K

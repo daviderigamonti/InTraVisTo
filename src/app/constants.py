@@ -70,6 +70,11 @@ NORM_MAP = [
     {"label": "Normalisation with rescaling parameters", "value": NormalizationStep.NORM_SCALE},
 ]
 
+INJ_NORM_MAP = [
+    {"label": "No normalisation", "value": NormalizationStep.NONE},
+    {"label": "Normalise inject", "value": NormalizationStep.ONLY_NORM},
+]
+
 SECONDARY_DECODING_MAP = [
     {"label": "Top-5 probability tokens", "value": SecondaryDecodingType.TOP_K},
     {"label": "Iterative subtraction decoding", "value": SecondaryDecodingType.ITERATIVE},

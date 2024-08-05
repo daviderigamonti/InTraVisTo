@@ -36,6 +36,14 @@ def generate_tooltip_children_layout(layer: int = -1, token: int = -1):
             ),
         ]),
         dbc.Row([
+            dbc.Select(
+                options=INJ_NORM_MAP,
+                value=DEFAULT_INJ_NORM,
+                id={"type": "custom_norm", "index": True},
+                className="form-select mx-4 my-2 py-1 borderpx-1 w-75 text-white tooltip-bg"
+            ),
+        ]),
+        dbc.Row([
             html.Button(
                 "Add Injection",
                 id={"type": "add_inj_button", "index": True},
@@ -44,7 +52,7 @@ def generate_tooltip_children_layout(layer: int = -1, token: int = -1):
         ], className="px-2 mt-2")
     ])
 
-def generate_inject_card(card_id, text, position, decoding, token, layer):
+def generate_inject_card(card_id, text, position, decoding, norm, token, layer):
     return dbc.Card([
         dbc.CardHeader([
             f"Injecting {text}",
@@ -56,6 +64,7 @@ def generate_inject_card(card_id, text, position, decoding, token, layer):
         dbc.CardBody([
             html.P(f"Position: {get_label_type_map(EMB_TYPE_MAP, position)}"),
             html.P(f"Decoding: {get_label_type_map(DECODING_TYPE_MAP, decoding)}"),
+            html.P(f"Normalisation: {get_label_type_map(INJ_NORM_MAP, norm)}"),
             html.P(f"Layer: {layer}, Token: {token} "),
         ])
     ], className="mb-2 me-2 inject-card text-white bg-primary", id={"type": "inject_card", "index": card_id},)
