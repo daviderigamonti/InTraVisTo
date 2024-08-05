@@ -66,8 +66,8 @@
 }
 
 .inject-card {
-    width: 18em;
-    height: 9em;
+    width: 19em;
+    height: 10em;
     font-size: small;
 }
 
@@ -76,8 +76,9 @@
 }
 
 .inject-card .card-header {
-    padding: 0.4rem 1rem 0.4rem 1rem;
+    padding: 0.4rem 1rem 0.1rem 1rem;
     text-align: center;
+    line-height: 2rem;
     overflow: auto;
 }
 
