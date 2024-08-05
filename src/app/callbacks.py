@@ -4,6 +4,7 @@ import dataclasses
 import inspect
 import uuid
 import time
+import copy
 import gc
 import os
 
@@ -307,7 +308,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         for step in compat[ModelCompatibilityInfo.NORM_PATH]:
             m = getattr(m, step)
         return LayerNormalizationWrapper(
-            norm=m, rescale_info=compat[ModelCompatibilityInfo.NORM_DATA], status=norm
+            norm=copy.deepcopy(m), rescale_info=compat[ModelCompatibilityInfo.NORM_DATA], status=norm
         )
 
 
