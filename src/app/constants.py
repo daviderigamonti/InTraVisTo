@@ -18,10 +18,16 @@ def decode_dataclass(c, class_name):
 
 TITLE = "InTraVisTo"
 ASSETS_PATH = "./app/assets/"
+IMAGE_PATH = "./assets/img/"
+
+IMG_XAI_LOGO = "XAI_lab_logo.png"
+IMG_POLIMI_LOGO = "Logo_polimi.png"
 FONT_AWESOME = "https://use.fontawesome.com/releases/v5.13.0/css/all.css"
-CUDA_DEVICE = "cuda"
+GFONTS_ALEGREYA = "https://fonts.googleapis.com/css2?family=Alegreya+Sans+SC&display=swap"
 
 DASH_SESSION_DIFF_GEN = "TOKEN_DIFFS"
+
+CUDA_DEVICE = "cuda"
 
 DECODING_TYPE_MAP = [
     {"label": "Output Decoder", "value": DecodingType.OUTPUT},

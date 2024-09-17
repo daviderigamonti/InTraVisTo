@@ -66,15 +66,31 @@ def generate_layout():
 
 def _navbar():
     return dbc.Navbar(
-        dbc.Container([
-            dbc.Row(
-                [dbc.Col(dbc.NavbarBrand("InTraVisTo", className="ms-1 text-white"))],
-                align="center",
-                className="g-0",
-            ),
-        ]),
+        dbc.NavItem([
+            dbc.Container([
+                dbc.Row([
+                    dbc.Col(html.Img(
+                        src=IMAGE_PATH + IMG_XAI_LOGO,
+                        alt="XAI-lab @Polimi",
+                        className="img-responsive navbar-img w-100",
+                        style={"filter": "invert(100%)"}
+                    ), className="col-2"),
+                    dbc.Col([
+                        dbc.Row("InTraVisTo", className="h2 text-white navbar-title d-flex justify-content-center"),
+                        dbc.Row("Inside Transformer Visualisation Tool", className="h5 text-white navbar-title d-flex justify-content-center"),
+                    ], className="col-8"),
+                    dbc.Col(html.Img(
+                        src=IMAGE_PATH + IMG_POLIMI_LOGO,
+                        alt="Politecnico Milano 1863",
+                        className="img-responsive navbar-img w-100",
+                        style={"filter": "invert(100%)"}
+                    ), className="col-2"),
+                ], align="center", className="g-0"),
+            ], style={"max-width": "100%"}),
+        ], className="mx-2 my-1"),
         sticky="top",
         color="primary",
+        className="py-0"
     )
 
 def _generation():

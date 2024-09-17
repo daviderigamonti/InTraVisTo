@@ -26,7 +26,7 @@ cache = diskcache.Cache("./app/cache")
 
 app = Dash(
     __name__,
-    external_stylesheets=[dbc.themes.MATERIA, FONT_AWESOME],
+    external_stylesheets=[dbc.themes.MATERIA, FONT_AWESOME, GFONTS_ALEGREYA],
     assets_folder=ASSETS_PATH,
     title=TITLE,
     # Avoid "Updating..." title while processing callbacks, invisible character is needed
