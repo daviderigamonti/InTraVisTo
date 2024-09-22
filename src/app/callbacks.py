@@ -16,7 +16,7 @@ from torch.cuda import OutOfMemoryError
 import torch
 import plotly.graph_objects as go
 
-from transformer_wrappers.wrappers import InjectInfo, InjectPosition
+from transformer_wrappers.wrappers import InjectInfo, InjectPosition, InjectionStrategy
 
 from utils.sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
 from utils.utils import (
@@ -72,6 +72,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # 1-dimensional tensors get squeezed into 0-dimensional ones
         input_len = 1 if input_len.dim() == 0 else len(input_len)
 
+        # TODO: find better place
+        inject_translate = {
+            EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
+            EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
+            EmbeddingsType.POST_FF : InjectPosition.FFNN,
+            EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
+        }
+
         injects = []
         for inject in run_config["injects"]:
             inj_token = model.tokenizer.encode(
@@ -85,28 +93,26 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             inj_token = inj_token[mask]
 
             if inj_token.size()[0] > 0:
-                # TODO: multitoken embeddings are averaged by default
                 encoding = model.decoder.decoding_matrix[inject["decoding"]]()
                 # Skip first values of iterator to reach the wanted layer (is_cuda call just to get a boolean value)
                 _ = [_ for _ in range(inject["target_layer"] - 1) if next(encoding).is_cuda and False]
                 encoding = next(encoding)
+                # Obtain embedding
+                emb = torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
+                # TODO: multitoken embeddings are averaged by default
+                print("Averaged multi-tokens for embedding injection")
                 # Normalize embedding
                 norm = get_normalization(model_id, inject["norm"])
-                encoding = norm(encoding)
-                print("Averaged multi-tokens for embedding injection")
-
-                inject_translate = {
-                    EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
-                    EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
-                    EmbeddingsType.POST_FF : InjectPosition.FFNN,
-                    EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
-                }
+                emb = norm(emb)
+                
                 injects.append(
                     InjectInfo(
                         layer=inject["target_layer"],
                         token=inject["target_token"],
                         position=inject_translate[inject["location"]],
-                        embedding=torch.stack([encoding[tok] for tok in inj_token], dim=0).mean(dim=0)
+                        embedding=emb,
+                        strategy=InjectionStrategy.REMOVE_FIRST_COMPONENT,
+                        decoding_matrix=encoding,
                     )
                 )
 
@@ -195,7 +201,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             [clean_text(t) for t in output_tokens[:input_len]], \
             [clean_text(t) for t in output_tokens[input_len:]], \
             session \
-
 
     @cache.memoize()
     def generate_sankey_info(
