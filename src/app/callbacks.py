@@ -337,6 +337,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         [
             Output("run_config", "data", allow_duplicate=True),
             Output("injection_card_id", "data"),
+            Output("start_generation_notify", "data"),
         ],
         [
             Input("max_new_tokens", "value"),
@@ -365,6 +366,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             raise PreventUpdate
         run_config["max_new_tok"] = max_new_tok
 
+        generate = no_update
+
         if "type" in ctx.triggered_id:
             if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
                 close_button_id = ctx.triggered_id["index"]
@@ -384,7 +387,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     "target_token": vis_config["x"] if "x" in vis_config else None,
                 }]
                 card_id += 1
-        return run_config, card_id
+                # Perform generation right after injection
+                generate = True
+        return run_config, card_id, generate
 
     @app.callback(
         Output("vis_config", "data"),
@@ -495,6 +500,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         [
             Input("initial_callbacks", "data"),
             Input("generate_button", "n_clicks"),
+            Input("start_generation_notify", "data")
         ],
         [
             State("text", "value"),
@@ -504,7 +510,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         prevent_initial_call=True,
     )
-    def call_model_generate(initial_callbacks, _, text, model_id, run_config, vis_config):
+    def call_model_generate(initial_callbacks, _gb, _gn, text, model_id, run_config, vis_config):
         initial_callbacks = process_initial_call(initial_callbacks) \
             if ctx.triggered_id and ctx.triggered_id == "initial_callbacks" else no_update
         session_id = str(uuid.uuid4())
@@ -991,6 +997,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         [
             Input("initial_callbacks", "data"),
             Input("generate_button", "n_clicks"),
+            Input("start_generation_notify", "data"),
         ],
         prevent_initial_call=True,
     )

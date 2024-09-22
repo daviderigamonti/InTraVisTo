@@ -343,6 +343,7 @@ def _stores():
         dcc.Store(id="vis_config", data=DEFAULT_VIS_CONFIG),
         dcc.Store(id="sankey_vis_config", data=DEFAULT_SANKEY_VIS_CONFIG),
         dcc.Store(id="table_vis_config", data=DEFAULT_TABLE_VIS_CONFIG),
+        dcc.Store(id="start_generation_notify"),
         dcc.Store(id="generation_notify"),
         dcc.Store(id="new_model_notify"),
         dcc.Store(id="injection_card_id", data=0),
