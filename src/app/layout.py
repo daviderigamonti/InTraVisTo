@@ -28,32 +28,39 @@ def generate_layout():
                     html.Div(children=[
                         dbc.Spinner(
                             dcc.Graph(
-                                figure=DEFAULT_FIGURE, id="main_graph",
+                                figure=DEFAULT_FIGURE, id="table_graph",
                                 className="spinner-visible-element", config={"displaylogo": False}
                             ),
                             spinner_class_name="spinner-graph", color="primary"
                         ),
-                    ], id="scrollable_graph", className="scrollable-div"),
+                    ], id="scrollable_table", className="scrollable-div"),
                     dbc.Tooltip(
-                        id="graph_tooltip", target="tooltip_target", is_open=False,
+                        id="table_tooltip", target="table_tooltip_target", is_open=False,
                         flip=False, placement="top", autohide=False, className="dash-tooltip", trigger="legacy",
                     ),
-                    html.Div([], id="tooltip_target"),
+                    html.Div([], id="table_tooltip_target", className="tooltip_target"),
                 ]), className="mt-3"), label="Heatmap"),
                 dbc.Tab(dbc.Card(dbc.CardBody([
                     dbc.Row([
                         _settings_sankey(),
                     ]),
                     html.Hr(),
-                    html.Div(children=[
-                        dbc.Spinner(
-                            dcc.Graph(
-                                figure=DEFAULT_FIGURE, id="sankey_graph",
-                                className="spinner-visible-element", config={"displaylogo": False}
+                    html.Div([
+                        html.Div(children=[
+                            dbc.Spinner(
+                                dcc.Graph(
+                                    figure=DEFAULT_FIGURE, id="sankey_graph",
+                                    className="spinner-visible-element", config={"displaylogo": False}
+                                ),
+                                spinner_class_name="spinner-graph", color="primary"
                             ),
-                            spinner_class_name="spinner-graph", color="primary"
+                        ], id="scrollable_sankey", className="biscrollable-div"),
+                        dbc.Tooltip(
+                            id="sankey_tooltip", target="sankey_tooltip_target", is_open=False,
+                            flip=False, placement="top", autohide=False, className="dash-tooltip", trigger="legacy",
                         ),
-                    ], id="scrollable_sankey", className="biscrollable-div"),
+                        html.Div([], id="sankey_tooltip_target", className="tooltip_target"),
+                    ], style={"position": "relative"}),
                 ]), className="mt-3"), label="Sankey")
             ]),
             *_stores(),
@@ -62,6 +69,7 @@ def generate_layout():
         html.Div([], id="overlay", className="overlay"),
         html.Div([], id="javascript_inject", style={"display": "none"}),
         html.Div(id="scrollable_table_js_store", children=0, style={"display": "none"}),
+        html.Div(id="scrollable_sankey_js_store", children=0, style={"display": "none"}),
     ])
 
 def _navbar():
@@ -337,6 +345,7 @@ def _settings_sankey():
 def _stores():
     return (
         dcc.Store(id="table_scroll", data=0),
+        dcc.Store(id="sankey_scroll", data=0),
         dcc.Store(id="run_config", data=DEFAULT_RUN_CONFIG),
         dcc.Store(id="current_run_config"),
         dcc.Store(id="click_data_store", data={}),

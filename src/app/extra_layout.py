@@ -2,13 +2,16 @@ from dash import html
 
 import dash_bootstrap_components as dbc
 
+from utils.utils import EmbeddingsType
 from app.constants import *
 from app.defaults import *
 
 # TODO: fix css
-def generate_tooltip_children_layout(layer: int = -1, token: int = -1):
+def generate_tooltip_children_layout(
+    layer: int = -1, token: int = -1, emb_type: EmbeddingsType = None
+):
     return dbc.Col([
-        dbc.Row([html.H2("Inject Custom Embedding")]),
+        dbc.Row([html.H2("Inject Embedding")]),
         dbc.Row([html.P(f"Layer: {layer}, Token: {token}")]),
         dbc.Row([
             dbc.Input(
@@ -26,7 +29,11 @@ def generate_tooltip_children_layout(layer: int = -1, token: int = -1):
                 id={"type": "custom_emb_location", "index": True},
                 className="form-select mx-4 my-2 py-1 borderpx-1 w-75 text-white tooltip-bg"
             ),
-        ]),
+        ]) if emb_type is None else dbc.Select(
+            options=[EMB_TYPE_MAP], value=emb_type,
+            id={"type": "custom_emb_location", "index": True},
+            disabled=True, style={"display": "none"}
+        ),
         dbc.Row([
             dbc.Select(
                 options=DECODING_TYPE_MAP,

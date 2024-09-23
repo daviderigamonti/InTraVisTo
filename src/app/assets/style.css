@@ -121,10 +121,10 @@
     visibility: visible;
 }
 
-#tooltip_target {
+.tooltip_target {
     left: 0px;
     top: 0px;
-    width: 85px;
+    width: 1px;
     height: 1px;
     position: absolute;
 }

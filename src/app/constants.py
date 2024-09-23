@@ -9,6 +9,9 @@ from utils.sankey import AttentionHighlight, SizeAdapt
 def get_label_type_map(type_map, value):
     return [i["label"] for i in type_map if i["value"] == value][0]
 
+def get_value_type_map(type_map, label):
+    return [i["value"] for i in type_map if i["label"] == label][0]
+
 def encode_dataclass(c):
     return json.dumps(dataclasses.asdict(c))
 
@@ -41,6 +44,12 @@ EMB_TYPE_MAP = [
     {"label": "FFNN", "value": EmbeddingsType.POST_FF},
     {"label": "Residual + Self Attention", "value": EmbeddingsType.POST_ATTENTION_RESIDUAL},
     {"label": "Self Attention", "value": EmbeddingsType.POST_ATTENTION},
+]
+EMB_TYPE_SANKEY_NODE_MAP = [
+    {"label": "Node", "value": EmbeddingsType.BLOCK_OUTPUT},
+    {"label": "FFNN", "value": EmbeddingsType.POST_FF},
+    {"label": "Intermediate", "value": EmbeddingsType.POST_ATTENTION_RESIDUAL},
+    {"label": "Attention", "value": EmbeddingsType.POST_ATTENTION},
 ]
 
 PROB_TYPE_MAP = [
@@ -123,8 +132,11 @@ TABLE_Z_FORMAT = {
 
 TABLE_HEIGHT_INCREMENT = 32
 TABLE_WIDTH_INCREMENT = 85
-GRAPH_TOOLTIP_OFFSET_X = 11.7
-GRAPH_TOOLTIP_OFFSET_Y = 628.6
+TABLE_TOOLTIP_OFFSET_X = 11.7
+TABLE_TOOLTIP_OFFSET_Y = 628.6
+
+SANKEY_LEFT_MARGIN = 20
+SANKEY_TOP_MARGIN = 20
 
 HEARTBEAT_INTERVAL = 10 # Seconds
 HEARTBEAT_TIMEOUT = 15 # Seconds

@@ -36,6 +36,7 @@ DEFAULT_FIGURE = go.Figure(layout={
 DEFAULT_FONT_SIZE = 12
 DEFAULT_RUN_CONFIG = {"max_new_tok": 10, "injects": []}
 DEFAULT_VIS_CONFIG = {
+    "click": None,
     "strategy": DEFAULT_DECODING,
     "res_contrib": DEFAULT_RES_TYPE,
     "norm": DEFAULT_NORM,
@@ -49,6 +50,7 @@ DEFAULT_SANKEY_VIS_CONFIG = {
         font_size=DEFAULT_FONT_SIZE,
         only_nodes_labels=True,
         size_adapt=SizeAdapt.FIXED,
+        margins={"left": SANKEY_LEFT_MARGIN, "top": SANKEY_TOP_MARGIN},
     )),
 }
 DEFAULT_TABLE_VIS_CONFIG = {

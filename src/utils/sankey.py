@@ -44,7 +44,7 @@ class SankeyParameters:
     # COLORS
     node_opacity: float = 0.7  # Opacity of nodes
     link_opacity: float = 0.5  # Opacity of links
-    node_color_map: dict[str, float] = field(
+    node_color_map: dict[str, tuple] = field(
         default_factory=lambda: {
             "Default": (220, 220, 220),
             "Node": (33, 150, 243),
@@ -53,7 +53,7 @@ class SankeyParameters:
             "Attention": (93, 224, 31),
         }
     )
-    link_color_map: dict[str, float] = field(
+    link_color_map: dict[str, tuple] = field(
         default_factory=lambda: {
             "Default": (255, 255, 255),
             "residual_norm": (31, 93, 224),
@@ -76,6 +76,12 @@ class SankeyParameters:
     sankey_zero: float = 0.000000000000001
     font_size: float = 12  # Text font size
     size: int = 1800  # Size of square canvas
+    margins: dict[str, tuple] = field(
+        default_factory=lambda: {
+            "top": 20,
+            "left": 20,
+        }
+    )
     size_adapt: SizeAdapt = SizeAdapt.FIXED
 
 
@@ -291,7 +297,9 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     nodes_extra = [{
             "text": l,
             "diff": f"Decoded difference from previous layer: {''.join(linkinfo["diff"][k[0]-1][k[1]])}"
-            if t in ["Node"] and k[0] > 0 else ""
+                if t in ["Node"] and k[0] > 0 else "",
+            "y": k[0], "x": k[1],
+            "type": t,
         } for l, t, k in zip(lab, typemap, elmap.keys())
     ]
     if sankey_parameters.multirep:
@@ -459,8 +467,9 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     fig = go.Figure(
         go.Sankey(
         orientation="v",
-        arrangement="freeform",
+        arrangement="fixed",
         valueformat=".5r",
+        customdata=nodes_extra, # Replicated customdata to handle node click events
         node={
             "customdata": nodes_extra,
             "hovertemplate": "%{customdata.text}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
@@ -483,7 +492,8 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     ))
     fig.update_layout(
         font_size=sankey_parameters.font_size, font_family="Verdana", font_color="black",
-        width=size, height=size,
+        width=size, height=size, 
+        margin={"t": sankey_parameters.margins["top"], "l": sankey_parameters.margins["left"]},
         modebar_remove=["select", "lasso"]
     )
     return fig

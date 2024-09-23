@@ -5,6 +5,7 @@ import inspect
 import uuid
 import time
 import copy
+import math
 import gc
 import os
 
@@ -412,14 +413,15 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
         col_0_offset = 1 if len(hide_start_table) > 0 else 0
-        vis_config |= {"x": click_data["points"][0]["x"] + col_0_offset} if click_data else {"x": None}
-        vis_config |= {"y": click_data["points"][0]["y"]} if click_data else {"y": None}
+        vis_config |= {"click": click_data["click"]} if click_data else {"click": None}
+        vis_config |= {"x": click_data["x"] + col_0_offset} if click_data else {"x": None}
+        vis_config |= {"y": click_data["y"]} if click_data else {"y": None}
         vis_config |= {"strategy": strategy}
         vis_config |= {"res_contrib": res_contrib}
         vis_config |= {"norm": norm}
         vis_config |= {"secondary_decoding": secondary_decoding}
         if ctx.triggered_id == "generation_notify":
-            vis_config |= {"x": None, "y": None}
+            vis_config |= {"click": None, "x": None, "y": None}
         return vis_config
 
     @app.callback(
@@ -447,8 +449,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         att_high_k, att_high_w, att_select, hide_labels, # pylint:disable=unused-argument
         font_size, size_adapt, sankey_vis_config
     ):
-        token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
-        layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
+        token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None and vis_config["click"] != "sankey" else 0
+        layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None and vis_config["click"] != "sankey" else 0
         hide_labels = len(hide_labels) > 0
         att_high = [locals()[v] if v else "" for k,v in ATTENTION_ID_MAP.items() if k == att_select][0]
         sankey_vis_config |= {"hide_start": len(hide_start) > 0}
@@ -554,7 +556,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
     @app.callback(
         [
-            Output("main_graph", "figure"),
+            Output("table_graph", "figure"),
             Output("output_text", "value"),
         ],
         [
@@ -570,9 +572,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         prevent_initial_call=True,
     )
-    def update_graph(
+    def update_table(
         _, tab_vis_config, vis_config, text, model_id, run_config, session_id
     ):
+        if vis_config["click"] == "sankey":
+            return no_update, no_update
+
         with models_lock:
             if model_id not in models:
                 raise PreventUpdate
@@ -613,10 +618,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # TODO: find nicer workaround
         # Avoid empty tokens at start and end
         if p[0] == [] and text[0] == []:
-            text[0] = [[[""]] * (input_len + output_len + offset - 1)]
+            text[0] = [[""]] * (input_len + output_len + offset - 1)
             p[0] = [None] * (input_len + output_len + offset - 1)
         if p[-1] == [] and text[-1] == []:
-            text[-1] = [[[""]] * (input_len + output_len + offset - 1)]
+            text[-1] = [[""]] * (input_len + output_len + offset - 1)
             p[-1] = [None] * (input_len + output_len + offset - 1)
 
         fig = go.Figure(data=go.Heatmap(
@@ -738,6 +743,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         prevent_initial_call=True,
     )
     def update_sankey(vis_config, sankey_vis_config, text, model_id, run_config, session_id):
+        if vis_config["click"] == "sankey":
+            return no_update
+
         with models_lock:
             if model_id not in models:
                 raise PreventUpdate
@@ -846,41 +854,108 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
     @app.callback(
         [
-            Output("graph_tooltip", "is_open", allow_duplicate=True),
-            Output("tooltip_target", "style"),
-            Output("graph_tooltip", "children", allow_duplicate=True),
             Output("click_data_store", "data"),
-            Output("main_graph", "clickData")
+            Output("table_graph", "clickData"),
+            Output("sankey_graph", "clickData")
+        ],
+        [
+            Input("table_graph", "clickData"),
+            Input("sankey_graph", "clickData"),
+        ],
+        prevent_initial_call=True,
+    )
+    def click_data_handler(table_click_data, sankey_click_data):
+        click_data = {"notify": str(uuid.uuid4())}
+        if table_click_data:
+            click_data |= {
+                "x": table_click_data["points"][0]["x"], "y": table_click_data["points"][0]["y"],
+                "bb_x": table_click_data["points"][0]["bbox"]["x0"] + TABLE_WIDTH_INCREMENT / 2,
+                "bb_y": table_click_data["points"][0]["bbox"]["y0"],
+                "click": "table"
+            }
+        elif sankey_click_data:
+            click_data |= {
+                "x": math.ceil(sankey_click_data["points"][0]["customdata"]["x"]),
+                "y": math.ceil(sankey_click_data["points"][0]["customdata"]["y"]),
+                "bb_x": sankey_click_data["points"][0]["y0"] + sankey_click_data["points"][0]["dy"] / 2 + SANKEY_LEFT_MARGIN,
+                "bb_y": sankey_click_data["points"][0]["x0"] + SANKEY_TOP_MARGIN,
+                "type": get_value_type_map(
+                    EMB_TYPE_SANKEY_NODE_MAP, sankey_click_data["points"][0]["customdata"]["type"]
+                ),
+                "click": "sankey"
+            }
+        else:
+            click_data = no_update, None, None
+        return click_data, None, None
+
+    @app.callback(
+        [
+            Output("sankey_tooltip", "is_open", allow_duplicate=True),
+            Output("sankey_tooltip_target", "style"),
+            Output("sankey_tooltip", "children", allow_duplicate=True),
         ],
         [
             Input("generation_notify", "data"),
             # Click data handler (only one, others are updated through click_data_store)
-            Input("main_graph", "clickData"),
+            Input("click_data_store", "data"),
+        ],
+        [
+            State("sankey_scroll", "data"),
+        ],
+        prevent_initial_call=True,
+    )
+    def display_sankey_embedding_tooltip(_, click_data, sankey_scroll):
+        if ctx.triggered_id == "generation_notify" or click_data["y"] <= 0 or click_data["click"] != "sankey":
+            return False, no_update, []
+
+        children = [extra_layout.generate_tooltip_children_layout(
+            layer=click_data["y"],
+            token=click_data["x"],
+            emb_type=click_data["type"]
+        )]
+
+        x_tooltip = click_data["bb_x"] - sankey_scroll
+        y_tooltip = click_data["bb_y"]
+
+        tooltip_style = {
+            "transform": f"translate({x_tooltip}px, {y_tooltip}px)"
+        }
+
+        return True, tooltip_style, children
+
+    @app.callback(
+        [
+            Output("table_tooltip", "is_open", allow_duplicate=True),
+            Output("table_tooltip_target", "style"),
+            Output("table_tooltip", "children", allow_duplicate=True),
+        ],
+        [
+            Input("generation_notify", "data"),
+            # Click data handler (only one, others are updated through click_data_store)
+            Input("click_data_store", "data"),
         ],
         [
             State("table_scroll", "data"),
         ],
         prevent_initial_call=True,
     )
-    def display_embedding_tooltip(_, click_data, table_scroll):
-        if click_data is None or ctx.triggered_id == "generation_notify" or click_data["points"][0]["y"] <= 0:
-            if click_data is None:
-                return False, no_update, [], no_update, None
-            return False, no_update, [], click_data.copy() | {"notify": str(uuid.uuid4())}, None
+    def display_table_embedding_tooltip(_, click_data, table_scroll):
+        if ctx.triggered_id == "generation_notify" or click_data["y"] <= 0 or click_data["click"] != "table":
+            return False, no_update, []
 
         children = [extra_layout.generate_tooltip_children_layout(
-            layer=click_data["points"][0]["y"],
-            token=click_data["points"][0]["x"],
+            layer=click_data["y"],
+            token=click_data["x"],
         )]
 
-        x_tooltip = click_data["points"][0]["bbox"]["x0"] - table_scroll
-        y_tooltip = click_data["points"][0]["bbox"]["y0"]
+        x_tooltip = click_data["bb_x"] - table_scroll
+        y_tooltip = click_data["bb_y"]
 
         tooltip_style = {
             "transform": f"translate({x_tooltip}px, {y_tooltip}px)"
         }
 
-        return True, tooltip_style, children, click_data.copy() | {"notify": str(uuid.uuid4())}, None
+        return True, tooltip_style, children
 
     @app.callback(
             Output("inject_container", "children", allow_duplicate=True),
@@ -1070,8 +1145,17 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     clientside_callback(
         ClientsideFunction(
             namespace="clientside",
-            function_name="update_scroll"
+            function_name="update_table_scroll"
         ),
         Output("table_scroll", "data"),
         Input("scrollable_table_js_store", "children"),
+    )
+
+    clientside_callback(
+        ClientsideFunction(
+            namespace="clientside",
+            function_name="update_sankey_scroll"
+        ),
+        Output("sankey_scroll", "data"),
+        Input("scrollable_sankey_js_store", "children"),
     )
