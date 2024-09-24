@@ -62,31 +62,31 @@
     font-family: "Alegreya Sans SC", sans-serif;
 }
 
-.inject-container {
+.mod-container {
     height: 22vh;
     display: flex;
     flex-wrap: wrap;
     overflow-y: auto;
 }
 
-.inject-card {
+.mod-card {
     width: 19em;
     height: 10em;
     font-size: small;
 }
 
-.inject-card p {
+.mod-card p {
     margin: 0em;
 }
 
-.inject-card .card-header {
+.mod-card .card-header {
     padding: 0.4rem 1rem 0.1rem 1rem;
     text-align: center;
     line-height: 2rem;
     overflow: auto;
 }
 
-.inject-card .card-body {
+.mod-card .card-body {
     padding-top: 0.4rem;
     padding-bottom: 0.4rem;
     overflow: auto;

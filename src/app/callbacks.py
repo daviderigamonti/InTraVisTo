@@ -17,7 +17,7 @@ from torch.cuda import OutOfMemoryError
 import torch
 import plotly.graph_objects as go
 
-from transformer_wrappers.wrappers import InjectInfo, InjectPosition, InjectionStrategy
+from transformer_wrappers.wrappers import InjectInfo, InjectionStrategy, AblationInfo
 
 from utils.sankey import SankeyParameters, generate_complete_sankey, generate_sankey, format_sankey
 from utils.utils import (
@@ -73,14 +73,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # 1-dimensional tensors get squeezed into 0-dimensional ones
         input_len = 1 if input_len.dim() == 0 else len(input_len)
 
-        # TODO: find better place
-        inject_translate = {
-            EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
-            EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
-            EmbeddingsType.POST_FF : InjectPosition.FFNN,
-            EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
-        }
-
         injects = []
         for inject in run_config["injects"]:
             inj_token = model.tokenizer.encode(
@@ -110,12 +102,20 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     InjectInfo(
                         layer=inject["target_layer"],
                         token=inject["target_token"],
-                        position=inject_translate[inject["location"]],
+                        position=INJECT_TRANSLATE[inject["location"]],
                         embedding=emb,
                         strategy=InjectionStrategy.REMOVE_FIRST_COMPONENT,
                         decoding_matrix=encoding,
                     )
                 )
+        ablations = [
+            AblationInfo(
+                layers=(ablation["target_layer"],ablation["target_layer"]),
+                token=ablation["target_token"],
+                position=ABLATION_TRANSLATE[ablation["location"]],
+            )
+            for ablation in run_config["ablations"]
+        ]
 
         gen_config = GenerationConfig(
             pad_token_id=model.model_config.eos_token_id,
@@ -127,7 +127,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         wrapper_gen_config = {
             "generation_config": gen_config,
             "return_inner_states": True,
-            model.model.INJECTS_PARAMETER: injects
+            model.model.INJECTS_PARAMETER: injects,
+            model.model.ABLATIONS_PARAMETER: ablations,
         }
 
         generation_result = model.model.generate(inputs.input_ids, **wrapper_gen_config)
@@ -206,7 +207,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     @cache.memoize()
     def generate_sankey_info(
         text, model_id, run_config, session_id, strategy, residual_contribution, norm_id, secondary_decoding
-        ):
+    ):
         with models_lock:
             if model_id not in models:
                 raise PreventUpdate
@@ -245,6 +246,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         linkinfo["attn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
         linkinfo["ffnn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
+
+        for abl in run_config["ablations"]:
+            if abl["location"] == EmbeddingsType.POST_ATTENTION:
+                linkinfo["attn_res_percent"][abl["target_layer"]][abl["target_token"]] = torch.tensor(1.0)
+            elif abl["location"] == EmbeddingsType.POST_FF:
+                linkinfo["ffnn_res_percent"][abl["target_layer"]][abl["target_token"]] = torch.tensor(1.0)
 
         linkinfo["attentions"] = generated_output["attentions"]
 
@@ -297,6 +304,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 ), dim=0)
             ],
         }
+        
         # TODO: choose how to pass values (as torch tensors or python lists)
         #       right now: attentions, kl_diffs -> torch tensor and ffnn_res_percent, attn_res_percent -> python list
         return dfs, linkinfo, len(input_tok), len(output_tok)
@@ -337,16 +345,17 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     @app.callback(
         [
             Output("run_config", "data", allow_duplicate=True),
-            Output("injection_card_id", "data"),
+            Output("mod_card_id", "data"),
             Output("start_generation_notify", "data"),
         ],
         [
             Input("max_new_tokens", "value"),
+            Input({"type": "add_abl_button", "index": ALL}, "n_clicks"),
             Input({"type": "add_inj_button", "index": ALL}, "n_clicks"),
-            Input({"type": "inject_close_button", "index": ALL}, "n_clicks"),
+            Input({"type": "mod_close_button", "index": ALL}, "n_clicks"),
         ],
         [
-            State("injection_card_id", "data"),
+            State("mod_card_id", "data"),
             State({"type": "custom_emb", "index": ALL}, "value"),
             State({"type": "custom_emb_location", "index": ALL}, "value"),
             State({"type": "custom_decoding", "index": ALL}, "value"),
@@ -358,7 +367,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     )
     def update_run_config(
         max_new_tok,
-        inj_button, inj_close_button,
+        abl_button, inj_button, mod_close_button,
         card_id,
         custom_emb, custom_emb_location, custom_decoding, custom_norm,
         run_config, vis_config
@@ -370,9 +379,10 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         generate = no_update
 
         if "type" in ctx.triggered_id:
-            if ctx.triggered_id["type"] == "inject_close_button" and not all(v is None for v in inj_close_button):
+            if ctx.triggered_id["type"] == "mod_close_button" and not all(v is None for v in mod_close_button):
                 close_button_id = ctx.triggered_id["index"]
                 run_config["injects"] = [inj for inj in run_config["injects"] if inj["id"] != close_button_id]
+                run_config["ablations"] = [abl for abl in run_config["ablations"] if abl["id"] != close_button_id]
             if ctx.triggered_id["type"] == "add_inj_button" and \
                     not all(v is None for v in inj_button) and \
                     custom_emb and \
@@ -384,6 +394,18 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     "location": custom_emb_location[0],
                     "decoding": custom_decoding[0],
                     "norm": custom_norm[0],
+                    "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
+                    "target_token": vis_config["x"] if "x" in vis_config else None,
+                }]
+                card_id += 1
+                # Perform generation right after injection
+                generate = True
+            if ctx.triggered_id["type"] == "add_abl_button" and \
+                    not all(v is None for v in abl_button) and \
+                    custom_emb_location:
+                run_config["ablations"] = run_config["ablations"] + [{
+                    "id": card_id,
+                    "location": custom_emb_location[0],
                     "target_layer": vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None,
                     "target_token": vis_config["x"] if "x" in vis_config else None,
                 }]
@@ -404,17 +426,23 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         ],
         [
             State("hide_start_table", "value"),
+            State("hide_start_sankey", "value"),
             State("vis_config", "data"),
         ],
         prevent_initial_call=True,
     )
     def update_vis_config(
-        _, click_data, strategy, res_contrib, norm, secondary_decoding, hide_start_table, vis_config
-        ):
+        _, click_data, strategy, res_contrib, norm, secondary_decoding, 
+        hide_start_table, hide_start_sankey, vis_config
+    ):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
         col_0_offset = 1 if len(hide_start_table) > 0 else 0
+        sankey_0_offset = 1 if len(hide_start_sankey) > 0 else 0
+        vis_config |= {"source": "click" if click_data else None}
         vis_config |= {"click": click_data["click"]} if click_data else {"click": None}
-        vis_config |= {"x": click_data["x"] + col_0_offset} if click_data else {"x": None}
+        vis_config |= {
+            "x": click_data["x"] + (col_0_offset if click_data["click"] == "table" else sankey_0_offset)
+        } if click_data else {"x": None}
         vis_config |= {"y": click_data["y"]} if click_data else {"y": None}
         vis_config |= {"strategy": strategy}
         vis_config |= {"res_contrib": res_contrib}
@@ -575,7 +603,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     def update_table(
         _, tab_vis_config, vis_config, text, model_id, run_config, session_id
     ):
-        if vis_config["click"] == "sankey":
+        if vis_config["source"] == "click" and vis_config["click"] == "sankey":
             return no_update, no_update
 
         with models_lock:
@@ -710,6 +738,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 showarrow=False,
             )
 
+        # Ablation reminders
+        for abl in run_config["ablations"]:
+            if abl["location"] == tab_vis_config["emb_type"]:
+                fig.add_shape(
+                    x0=abl["target_token"] + offset - 0.5, x1=abl["target_token"] + offset - 1.5,
+                    y0=abl["target_layer"] - 0.5 + 1, y1=abl["target_layer"] + 0.5 + 1,
+                    line_width=2, line_color="yellow"
+                )
         # Injects reminders
         for inj in run_config["injects"]:
             if inj["location"] == tab_vis_config["emb_type"]:
@@ -794,7 +830,13 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             sankey_param.token_index -= token_offset
             sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
             sankey_info = generate_sankey(dfs, linkinfo, sankey_param)
-        fig = format_sankey(*sankey_info, linkinfo, sankey_param)
+        hide_nodes = {
+            (abl["target_layer"] + 1, abl["target_token"] - token_offset): get_label_type_map(
+                EMB_TYPE_SANKEY_NODE_MAP, abl["location"]
+            )
+            for abl in run_config["ablations"]
+        }
+        fig = format_sankey(*sankey_info, linkinfo, sankey_param, hide_nodes)
         return fig
 
     @app.callback(
@@ -911,7 +953,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         children = [extra_layout.generate_tooltip_children_layout(
             layer=click_data["y"],
             token=click_data["x"],
-            emb_type=click_data["type"]
+            emb_type=click_data["type"],
+            ablation_opt=True
         )]
 
         x_tooltip = click_data["bb_x"] - sankey_scroll
@@ -940,7 +983,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         prevent_initial_call=True,
     )
     def display_table_embedding_tooltip(_, click_data, table_scroll):
-        if ctx.triggered_id == "generation_notify" or click_data["y"] <= 0 or click_data["click"] != "table":
+        if ctx.triggered_id == "generation_notify" or \
+                click_data["y"] <= 0 or \
+                (vis_config["source"] == "click" and click_data["click"] != "table"):
             return False, no_update, []
 
         children = [extra_layout.generate_tooltip_children_layout(
@@ -958,59 +1003,40 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         return True, tooltip_style, children
 
     @app.callback(
-            Output("inject_container", "children", allow_duplicate=True),
-        [
-            Input("add_inj_button", "n_clicks")
-        ],
-        [
-            State("vis_config", "data"),
-            State("inject_container", "children"),
-            State("custom_emb", "value"),
-            State("custom_emb_location", "value"),
-            State("custom_decoding", "value"),
-            State("custom_norm", "value"),
-        ],
-        prevent_initial_call=True,
-    )
-    def add_injection(
-        button, vis_config, inject_container, 
-        custom_emb, custom_emb_location, custom_decoding, custom_norm
-    ):
-        if button is None:
-            raise PreventUpdate
-        target_layer = vis_config["y"] - 1 if "y" in vis_config and vis_config["y"] is not None else None
-        target_token = vis_config["x"] if "x" in vis_config else None
-        return inject_container + [extra_layout.generate_inject_card(
-            button, custom_emb, custom_emb_location, custom_decoding, custom_norm, target_layer, target_token
-        )]
-
-    @app.callback(
-        Output("inject_container", "children"),
+        Output("mod_container", "children"),
         [
             Input("run_config", "data"),
             Input("table_vis_config", "data"),
         ],
         [
-            State("inject_container", "children"),
+            State("mod_container", "children"),
         ],
         prevent_initial_call=True,
     )
-    def manage_inject_cards(run_config, tab_vis_config, inject_container):
-        if len(run_config["injects"]) == len(inject_container) and ctx.triggered_id != "table_vis_config":
+    def manage_inject_cards(run_config, tab_vis_config, mod_container):
+        mods = run_config["injects"] + run_config["ablations"]
+        if len(mods) == len(mod_container) and ctx.triggered_id != "table_vis_config":
             raise PreventUpdate
-
+        
         # TODO: better to re-create each card every time or look for removed/new cards and remove/add them?
+        mods = sorted(mods, key=lambda m: m["id"])
         return [
             extra_layout.generate_inject_card(
-                card_id=inj["id"],
-                text=inj["text"],
-                position=inj["location"],
-                decoding=inj["decoding"],
-                norm=inj["norm"],
-                token=inj["target_token"] - (1 if tab_vis_config["hide_start"] else 0),
-                layer=inj["target_layer"] + 1
+                card_id=mod["id"],
+                text=mod["text"],
+                position=mod["location"],
+                decoding=mod["decoding"],
+                norm=mod["norm"],
+                token=mod["target_token"] - (1 if tab_vis_config["hide_start"] else 0),
+                layer=mod["target_layer"] + 1
+            ) if mod in run_config["injects"] else
+            extra_layout.generate_ablation_card(
+                card_id=mod["id"],
+                position=mod["location"],
+                token=mod["target_token"] - (1 if tab_vis_config["hide_start"] else 0),
+                layer=mod["target_layer"] + 1
             )
-            for inj in run_config["injects"]
+            for mod in mods
         ]
 
     @app.callback(

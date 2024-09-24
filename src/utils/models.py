@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 import transformers
 import torch
 
-from transformer_wrappers.wrappers import InjectCausalLMWrapper
+from transformer_wrappers.wrappers import AblInjCausalLMWrapper
 
 from utils.utils import Decoder
 
@@ -141,7 +141,7 @@ class ModelUtils:
             model = None
             while True:
                 try:
-                    model = InjectCausalLMWrapper.from_pretrained(
+                    model = AblInjCausalLMWrapper.from_pretrained(
                         model_id, model_kwargs=model_config,
                         quantization_configs=quant_config,
                         tokenizer_name_or_path=model_id, tokenizer_kwargs=tokenizer_config,

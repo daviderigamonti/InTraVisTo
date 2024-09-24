@@ -1,6 +1,8 @@
 import dataclasses
 import json
 
+from transformer_wrappers.wrappers import InjectPosition, AblationPosition
+
 from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, SecondaryDecodingType
 from utils.models import ModelInfo, NormalizationStep
 from utils.sankey import AttentionHighlight, SizeAdapt
@@ -31,6 +33,17 @@ GFONTS_ALEGREYA = "https://fonts.googleapis.com/css2?family=Alegreya+Sans+SC&dis
 DASH_SESSION_DIFF_GEN = "TOKEN_DIFFS"
 
 CUDA_DEVICE = "cuda"
+
+INJECT_TRANSLATE = {
+    EmbeddingsType.BLOCK_OUTPUT : InjectPosition.OUTPUT,
+    EmbeddingsType.POST_ATTENTION : InjectPosition.ATTENTION,
+    EmbeddingsType.POST_FF : InjectPosition.FFNN,
+    EmbeddingsType.POST_ATTENTION_RESIDUAL : InjectPosition.INTERMEDIATE
+}
+ABLATION_TRANSLATE = {
+    EmbeddingsType.POST_ATTENTION : AblationPosition.ATTENTION,
+    EmbeddingsType.POST_FF : AblationPosition.FFNN,
+}
 
 DECODING_TYPE_MAP = [
     {"label": "Output Decoder", "value": DecodingType.OUTPUT},

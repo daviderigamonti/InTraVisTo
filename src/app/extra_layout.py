@@ -8,7 +8,8 @@ from app.defaults import *
 
 # TODO: fix css
 def generate_tooltip_children_layout(
-    layer: int = -1, token: int = -1, emb_type: EmbeddingsType = None
+    layer: int = -1, token: int = -1, 
+    emb_type: EmbeddingsType = None, ablation_opt: bool = False
 ):
     return dbc.Col([
         dbc.Row([html.H2("Inject Embedding")]),
@@ -56,7 +57,14 @@ def generate_tooltip_children_layout(
                 id={"type": "add_inj_button", "index": True},
                 className="btn btn-sm my-2 btn-primary float-end"
             ),
-        ], className="px-2 mt-2")
+        ], className="px-2 mt-2"),
+        dbc.Row([
+            html.Button(
+                "Remove Node",
+                id={"type": "add_abl_button", "index": True},
+                className="btn btn-sm my-1 btn-warning float-end"
+            ),
+        ], className="px-2") if ablation_opt else None,
     ])
 
 def generate_inject_card(card_id, text, position, decoding, norm, token, layer):
@@ -65,13 +73,28 @@ def generate_inject_card(card_id, text, position, decoding, norm, token, layer):
             f"Injecting {text}",
             html.Button(
                 html.I(className="fas fa-times"),
-                className="btn btn-sm btn-danger float-end", id={"type": "inject_close_button", "index": card_id}
+                className="btn btn-sm btn-danger float-end", id={"type": "mod_close_button", "index": card_id}
             ),
         ]),
         dbc.CardBody([
             html.P(f"Position: {get_label_type_map(EMB_TYPE_MAP, position)}"),
             html.P(f"Decoding: {get_label_type_map(DECODING_TYPE_MAP, decoding)}"),
             html.P(f"Normalisation: {get_label_type_map(INJ_NORM_MAP, norm)}"),
-            html.P(f"Layer: {layer}, Token: {token} "),
+            html.P(f"Layer: {layer}, Token: {token}"),
         ])
-    ], className="mb-2 me-2 inject-card text-white bg-primary", id={"type": "inject_card", "index": card_id},)
+    ], className="mb-2 me-2 mod-card text-white bg-primary", id={"type": "inject_card", "index": card_id},)
+
+def generate_ablation_card(card_id, position, token, layer):
+    return dbc.Card([
+        dbc.CardHeader([
+            f"Removing {get_label_type_map(EMB_TYPE_MAP, position)}",
+            html.Button(
+                html.I(className="fas fa-times"),
+                className="btn btn-sm btn-danger float-end", id={"type": "mod_close_button", "index": card_id}
+            ),
+        ]),
+        dbc.CardBody([
+            html.P(f"Layer: {layer}"),
+            html.P(f"Token: {token}"),
+        ])
+    ], className="mb-2 me-2 mod-card text-white bg-primary", id={"type": "abl_card", "index": card_id},)

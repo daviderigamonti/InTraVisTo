@@ -34,8 +34,9 @@ DEFAULT_FIGURE = go.Figure(layout={
 })
 
 DEFAULT_FONT_SIZE = 12
-DEFAULT_RUN_CONFIG = {"max_new_tok": 10, "injects": []}
+DEFAULT_RUN_CONFIG = {"max_new_tok": 10, "injects": [], "ablations": []}
 DEFAULT_VIS_CONFIG = {
+    "source": None,
     "click": None,
     "strategy": DEFAULT_DECODING,
     "res_contrib": DEFAULT_RES_TYPE,

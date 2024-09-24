@@ -15,7 +15,7 @@ def generate_layout():
                     _generation(),
                 ]),
                 dbc.Col([
-                    _injects(),
+                    _modifications(),
                 ])
             ]),
             html.Hr(),
@@ -164,10 +164,10 @@ def _modes():
         ])
     ])])
 
-def _injects():
+def _modifications():
     return dbc.Container([
         dbc.Row(
-            dbc.Col([], id="inject_container", className="inject-container")
+            dbc.Col([], id="mod_container", className="mod-container")
         ),
     ],
     fluid=True,
@@ -355,7 +355,7 @@ def _stores():
         dcc.Store(id="start_generation_notify"),
         dcc.Store(id="generation_notify"),
         dcc.Store(id="new_model_notify"),
-        dcc.Store(id="injection_card_id", data=0),
+        dcc.Store(id="mod_card_id", data=0),
         dcc.Store(id="model_id", data=DEFAULT_MODEL_ID),
         dcc.Store(id="model_info", data=dataclasses.asdict(DEFAULT_MODEL)),
         dcc.Store(id="initial_callbacks", data=DEFAULT_INITIAL_CALLS),

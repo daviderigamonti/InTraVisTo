@@ -73,7 +73,7 @@ class SankeyParameters:
     only_nodes_labels: bool = False
     rescale_factor: int = 3
     # Correction to avoid feeding nodes with a coordinate value of 0, which causes problems with Plotly Sankey Diagrams
-    sankey_zero: float = 0.000000000000001
+    sankey_zero: float = 1e-16
     font_size: float = 12  # Text font size
     size: int = 1800  # Size of square canvas
     margins: dict[str, tuple] = field(
@@ -109,10 +109,10 @@ def cumulative_sankey_traces(
     # Calculate current value of node by weighting its attention value for the parent's weight
     for index, el_index, base in zip(indexes, el_indexes, bases):
         res_w = linkinfo["attn_res_percent"][row-1][index].item()
-        res_w += 0.0000000001 if res_w == 0.0 else (-0.0000000001 if res_w == 1.0 else 0)  # Prevent 0
+        res_w += 1e-16 if res_w == 0.0 else (-1e-16 if res_w == 1.0 else 0)  # Prevent 0
         attn_w = 1 - res_w
         resattn_w = linkinfo["ffnn_res_percent"][row-1][index].item()
-        resattn_w += 0.0000000001 if resattn_w == 0.0 else (-0.0000000001 if resattn_w == 1.0 else 0)  # Prevent 0
+        resattn_w += 1e-16 if resattn_w == 0.0 else (-1e-16 if resattn_w == 1.0 else 0)  # Prevent 0
         ff_w = 1 - resattn_w
         # Create FFNN / Attention / Intermediate nodes
         if index < len(dfs["ffnn"][row]):
@@ -291,12 +291,12 @@ def change_color_brightness(rgb_color, brightness):
     return tuple([sum(channel) for channel in zip(rgb_color, delta_color)])
 
 
-def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: SankeyParameters):
+def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: SankeyParameters, hide_nodes=dict()):
     # Handle multiple labels for tokens with multiple representations
     typemap = [next(v["type"] for k, v in elmap.items() if v["id"] == i) for i in range(len(elmap.keys()))]
     nodes_extra = [{
-            "text": l,
-            "diff": f"Decoded difference from previous layer: {''.join(linkinfo["diff"][k[0]-1][k[1]])}"
+            "text": ', '.join(l),
+            "diff": f"Decoded difference from previous layer: {', '.join(linkinfo["diff"][k[0]-1][k[1]])}"
                 if t in ["Node"] and k[0] > 0 else "",
             "y": k[0], "x": k[1],
             "type": t,
@@ -410,6 +410,22 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
                 color = sankey_parameters.link_color_map["Default"].copy() + [sankey_parameters.attention_opacity,]
         link_colors.append(color)
 
+    # Remove colors from hidden links and nodes
+    hide_ids = [
+        [
+            i for i, (xy, typ) in enumerate(zip(revmap, typemap))
+            if tuple(map(math.ceil, xy)) == hide_xy and typ == hide_typ
+        ][0] for hide_xy, hide_typ in hide_nodes.items()
+    ]
+    node_colors = [
+        color if i not in hide_ids else sankey_parameters.node_color_map["Default"].copy() + [0.0,]
+        for i, color in enumerate(node_colors)
+    ]
+    link_colors = [
+        color if i not in hide_ids and j not in hide_ids else sankey_parameters.link_color_map["Default"].copy() + [0.0,]
+        for i, j, color in zip(un, ov, link_colors)
+    ]
+
     # Convert colors and add opacities
     node_colors = build_rgba_from_tuples(node_colors, sankey_parameters.node_opacity)
     link_colors = build_rgba_from_tuples(link_colors, sankey_parameters.link_opacity)
@@ -458,9 +474,16 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
     else:
         size = sankey_parameters.size
 
-    hovertemplates = [
+    hovertemplates_nodes = [
+        f"{ne['text']}<br>{ne['diff']}<extra>{ne['v']:.1%}</extra>"
+        if i not in hide_ids
+        else "<extra></extra>"
+        for i, ne in enumerate(nodes_extra)
+    ]
+    hovertemplates_links = [
         f"{le['name']} from {lab[un_el]} to {lab[ov_el]}<br>{le['kl_diff']}<extra>{le['v']:.1%}</extra>"
-        if (le["type"] not in ["att_in"] or un_el in max_att_list[ov_el]) else "<extra></extra>"
+        if (le["type"] not in ["att_in"] or un_el in max_att_list[ov_el]) and un_el not in hide_ids and ov_el not in hide_ids 
+        else "<extra></extra>"
         for le, un_el, ov_el in zip(links_extra, un, ov)
     ]
 
@@ -471,17 +494,18 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         valueformat=".5r",
         customdata=nodes_extra, # Replicated customdata to handle node click events
         node={
-            "customdata": nodes_extra,
-            "hovertemplate": "%{customdata.text}<br>%{customdata.diff}<extra>%{customdata.v:.1%}</extra>",
+            "customdata": hovertemplates_nodes,
+            "hovertemplate": "%{customdata}",
             "align": "left",
             "label": lab,
             "color": node_colors,
             "x": revmap_x,
             "y": revmap_y,
             "pad": 10000,
+            "line": {"color": "rgba(255,255,255,0)"},
         },
         link={
-            "customdata": hovertemplates,
+            "customdata": hovertemplates_links,
             "hovertemplate": "%{customdata}",
             "source": ov,
             "target": un,
