@@ -779,7 +779,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         prevent_initial_call=True,
     )
     def update_sankey(vis_config, sankey_vis_config, text, model_id, run_config, session_id):
-        if vis_config["click"] == "sankey":
+        if vis_config["source"] == "click" and vis_config["click"] == "sankey":
             return no_update
 
         with models_lock:
@@ -954,7 +954,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             layer=click_data["y"],
             token=click_data["x"],
             emb_type=click_data["type"],
-            ablation_opt=True
+            ablation_opt=True if click_data["type"] in [EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION] else False
         )]
 
         x_tooltip = click_data["bb_x"] - sankey_scroll
