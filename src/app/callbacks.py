@@ -646,11 +646,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # TODO: find nicer workaround
         # Avoid empty tokens at start and end
         if p[0] == [] and text[0] == []:
-            text[0] = [[""]] * (input_len + output_len + offset - 1)
-            p[0] = [None] * (input_len + output_len + offset - 1)
+            text[0] = [[""]] * (len(text[1]))
+            p[0] = [None] * (len(p[1]))
         if p[-1] == [] and text[-1] == []:
-            text[-1] = [[""]] * (input_len + output_len + offset - 1)
-            p[-1] = [None] * (input_len + output_len + offset - 1)
+            text[-1] = [[""]] * (len(text[1]))
+            p[-1] = [None] * (len(p[1]))
 
         fig = go.Figure(data=go.Heatmap(
             z=p,
@@ -669,7 +669,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             colorscale="blues",
         ))
         fig.update_layout(
-            margin={"l": 50, "r": 10, "t": 40, "b": 40},
+            margin={"l": 80, "r": 10, "t": 40, "b": 40},
             height=(model.model_config.num_hidden_layers + 2) * TABLE_HEIGHT_INCREMENT,
             width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
             xaxis={
@@ -985,7 +985,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     def display_table_embedding_tooltip(_, click_data, table_scroll):
         if ctx.triggered_id == "generation_notify" or \
                 click_data["y"] <= 0 or \
-                (vis_config["source"] == "click" and click_data["click"] != "table"):
+                click_data["click"] != "table":
             return False, no_update, []
 
         children = [extra_layout.generate_tooltip_children_layout(

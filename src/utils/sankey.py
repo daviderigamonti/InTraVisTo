@@ -502,7 +502,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
             "x": revmap_x,
             "y": revmap_y,
             "pad": 10000,
-            "line": {"color": "rgba(255,255,255,0)"},
+            "line": {"color": "rgba(255,255,255,0)", "width": 0},
         },
         link={
             "customdata": hovertemplates_links,
