@@ -438,7 +438,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         # If table visualization is hiding the first column, then offset all x-axis click data by 1
         col_0_offset = 1 if len(hide_start_table) > 0 else 0
         sankey_0_offset = 1 if len(hide_start_sankey) > 0 else 0
-        vis_config |= {"source": "click" if click_data else None}
+        vis_config |= {"source": "click" if ctx.triggered_id == "click_data_store" else None}
         vis_config |= {"click": click_data["click"]} if click_data else {"click": None}
         vis_config |= {
             "x": click_data["x"] + (col_0_offset if click_data["click"] == "table" else sankey_0_offset)
@@ -477,8 +477,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         att_high_k, att_high_w, att_select, hide_labels, # pylint:disable=unused-argument
         font_size, size_adapt, sankey_vis_config
     ):
-        token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None and vis_config["click"] != "sankey" else 0
-        layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None and vis_config["click"] != "sankey" else 0
+        token = vis_config["x"] if "x" in vis_config and vis_config["x"] is not None else 0
+        layer = vis_config["y"] if "y" in vis_config and vis_config["y"] is not None else 0
         hide_labels = len(hide_labels) > 0
         att_high = [locals()[v] if v else "" for k,v in ATTENTION_ID_MAP.items() if k == att_select][0]
         sankey_vis_config |= {"hide_start": len(hide_start) > 0}
