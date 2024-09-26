@@ -841,12 +841,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 sankey_param.token_index -= token_offset
                 sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
                 sankey_info = generate_sankey(dfs, linkinfo, sankey_param)
-            hide_nodes = {
-                (abl["target_layer"] + 1, abl["target_token"] - token_offset): get_label_type_map(
-                    EMB_TYPE_SANKEY_NODE_MAP, abl["location"]
-                )
-                for abl in run_config["ablations"]
-            }
+            hide_nodes = [
+                (
+                    (abl["target_layer"] + 1, abl["target_token"] - token_offset),
+                    get_label_type_map(EMB_TYPE_SANKEY_NODE_MAP, abl["location"])
+                ) for abl in run_config["ablations"]
+            ]
             fig = format_sankey(*sankey_info, linkinfo, sankey_param, hide_nodes)
             return fig, [], False
 

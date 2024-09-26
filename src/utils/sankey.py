@@ -415,7 +415,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
         next(iter([
             i for i, (xy, typ) in enumerate(zip(revmap, typemap))
             if tuple(map(math.ceil, xy)) == hide_xy and typ == hide_typ
-        ]), -1) for hide_xy, hide_typ in hide_nodes.items()
+        ]), -1) for hide_xy, hide_typ in hide_nodes
     ]
     node_colors = [
         color if i not in hide_ids else sankey_parameters.node_color_map["Default"].copy() + [0.0,]
