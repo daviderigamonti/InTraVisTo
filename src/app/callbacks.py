@@ -96,7 +96,6 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 print("Averaged multi-tokens for embedding injection")
                 # Normalize embedding
                 norm = get_normalization(model_id, inject["norm"])
-                emb = norm(emb)
                 
                 injects.append(
                     InjectInfo(
@@ -106,6 +105,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                         embedding=emb,
                         strategy=InjectionStrategy.REMOVE_FIRST_COMPONENT,
                         decoding_matrix=encoding,
+                        decoding_norm=norm
                     )
                 )
         ablations = [
@@ -586,6 +586,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         [
             Output("table_graph", "figure"),
             Output("output_text", "value"),
+            Output("display_alert", "children", allow_duplicate=True),
+            Output("display_alert", "is_open", allow_duplicate=True),
         ],
         [
             Input("generation_notify", "data"),
@@ -603,169 +605,177 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
     def update_table(
         _, tab_vis_config, vis_config, text, model_id, run_config, session_id
     ):
-        if vis_config["source"] == "click" and vis_config["click"] == "sankey":
-            return no_update, no_update
+        try:
+            if vis_config["source"] == "click" and vis_config["click"] == "sankey":
+                return no_update, no_update, no_update, no_update
 
-        with models_lock:
-            if model_id not in models:
-                raise PreventUpdate
-            model = models[model_id]
+            with models_lock:
+                if model_id not in models:
+                    raise PreventUpdate
+                model = models[model_id]
 
-        norm = get_normalization(model_id, vis_config["norm"])
+            norm = get_normalization(model_id, vis_config["norm"])
 
-        # Retrieve model outputs
-        generated_output, layers, input_tok, output_tok, session_id = model_generate(
-            text, model_id, run_config, session_id
-        )
-
-        # Compute secondary tokens
-        text = decode_layers(
-            layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
-            secondary_decoding=vis_config["secondary_decoding"], decoder=model.decoder, _session_id=session_id
-        )
-        text = extract_key_from_processed_layers(text, tab_vis_config["emb_type"])
-
-        # Compute probabilities
-        p = compute_probabilities(
-            layers=layers, strategy=vis_config["strategy"], residual_contribution=vis_config["res_contrib"],
-            norm=norm, norm_id=vis_config["norm"], decoder=model.decoder, _session_id=session_id,
-        )
-        p = extract_key_from_processed_layers(p, tab_vis_config["colour"])
-        p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) \
-            if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
-
-        # Remove first column from visualization
-        if tab_vis_config["hide_start"]:
-            text = [layer[1:] for layer in text]
-            p = [layer[1:] for layer in p]
-
-        offset = 0 if tab_vis_config["hide_start"] else 1
-        input_len = len(input_tok)
-        output_len = len(output_tok)
-
-        # TODO: find nicer workaround
-        # Avoid empty tokens at start and end
-        if p[0] == [] and text[0] == []:
-            text[0] = [[""]] * (len(text[1]))
-            p[0] = [None] * (len(p[1]))
-        if p[-1] == [] and text[-1] == []:
-            text[-1] = [[""]] * (len(text[1]))
-            p[-1] = [None] * (len(p[1]))
-
-        fig = go.Figure(data=go.Heatmap(
-            z=p,
-            text=text,
-            xgap=2,
-            ygap=2,
-            x=[i - 0.5 for i in range(0, input_len + output_len)],
-            y=list(range(0, model.model_config.num_hidden_layers + 2)),
-            hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
-            "<br><b>Layer</b>: %{y}" +
-            "<br><b>Token position</b>: %{x}" +
-            "<br><b>" + SECONDARY_DECODING_TEXT[vis_config["secondary_decoding"]] + "</b>: %{text}" +
-            "<extra></extra>",
-            texttemplate="%{text[0]}",
-            textfont={"size": tab_vis_config["font_size"]},
-            colorscale="blues",
-        ))
-        fig.update_layout(
-            margin={"l": 80, "r": 10, "t": 40, "b": 40},
-            height=(model.model_config.num_hidden_layers + 2) * TABLE_HEIGHT_INCREMENT,
-            width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
-            xaxis={
-                "title_text": "", "tickmode": "linear", "titlefont": {"size": 20}, 
-                "showgrid": False, "zeroline": False, "range": [-0.5, input_len + output_len - 2 + offset - 0.5]
-            },
-            yaxis={
-                "title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20},
-                "showgrid": False, "zeroline": False, "range": [-0.5, model.model_config.num_hidden_layers + 1.5]
-            },
-            plot_bgcolor="white",
-            template="plotly",
-            modebar_remove=["zoom", "pan", "zoomIn", "zoomOut", "autoScale"],
-            dragmode=False,
-        )
-
-        fig.add_shape(
-            x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
-            line_width=8, line_color="white"
-        )
-        fig.add_shape(
-            x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
-            line_width=2, line_color="#9C84D4"
-        )
-        fig.add_shape(
-            x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
-            line_width=8, line_color="white"
-        )
-        fig.add_shape(
-            x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
-            line_width=2, line_color="#9C84D4"
-        )
-
-        fig.add_hline(y=0.5, line_width=8, line_color="white")
-        fig.add_hline(y=0.5, line_width=2, line_color="#9C84D4")
-        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color="white")
-        fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color="#9C84D4")
-
-        # Input/Output annotations
-        for i, tok in enumerate(input_tok[1 - offset:]):
-            fig.add_annotation(
-                x=i, y=model.model_config.num_hidden_layers + 1.5, yshift=10, xshift=-TABLE_WIDTH_INCREMENT,
-                xref="x", yref="y", yanchor="bottom",
-                text=f"{tok}", hovertext=f"{tok}",
-                bgcolor="#94CCF9", bordercolor="black", opacity=0.7,
-                showarrow=False,
-            )
-            fig.add_annotation(
-                x=i, y=-0.5, yshift=-20,
-                xref="x", yref="y", yanchor="top",
-                text=f"{tok}", hovertext=f"{tok}",
-                bgcolor="#94CCF9", bordercolor="black", opacity=0.7,
-                showarrow=False,
-            )
-        for i, tok in enumerate(output_tok):
-            shift = 0
-            if i >= output_len - 1:
-                index = i
-                i = output_len - 2
-                shift = (index + 2 - output_len) * TABLE_WIDTH_INCREMENT
-            fig.add_annotation(
-                x=input_len + i - 1 + offset, y=-0.5, yshift=-20, xshift=shift,
-                xref="x", yref="y", yanchor="top",
-                text=f"{tok}", hovertext=f"{tok}",
-                bgcolor="#FEE69A", bordercolor="black", opacity=0.7,
-                showarrow=False,
+            # Retrieve model outputs
+            generated_output, layers, input_tok, output_tok, session_id = model_generate(
+                text, model_id, run_config, session_id
             )
 
-        # Ablation reminders
-        for abl in run_config["ablations"]:
-            if abl["location"] == tab_vis_config["emb_type"]:
-                fig.add_shape(
-                    x0=abl["target_token"] + offset - 0.5, x1=abl["target_token"] + offset - 1.5,
-                    y0=abl["target_layer"] - 0.5 + 1, y1=abl["target_layer"] + 0.5 + 1,
-                    line_width=2, line_color="yellow"
-                )
-        # Injects reminders
-        for inj in run_config["injects"]:
-            if inj["location"] == tab_vis_config["emb_type"]:
-                fig.add_shape(
-                    x0=inj["target_token"] + offset - 0.5, x1=inj["target_token"] + offset - 1.5,
-                    y0=inj["target_layer"] - 0.5 + 1, y1=inj["target_layer"] + 0.5 + 1,
-                    line_width=2, line_color="green"
-                )
-        # Cell selector
-        if vis_config["x"] is not None and vis_config["y"] is not None:
+            # Compute secondary tokens
+            text = decode_layers(
+                layers=layers, strategy=vis_config["strategy"], norm=norm, norm_id=vis_config["norm"],
+                secondary_decoding=vis_config["secondary_decoding"], decoder=model.decoder, _session_id=session_id
+            )
+            text = extract_key_from_processed_layers(text, tab_vis_config["emb_type"])
+
+            # Compute probabilities
+            p = compute_probabilities(
+                layers=layers, strategy=vis_config["strategy"], residual_contribution=vis_config["res_contrib"],
+                norm=norm, norm_id=vis_config["norm"], decoder=model.decoder, _session_id=session_id,
+            )
+            p = extract_key_from_processed_layers(p, tab_vis_config["colour"])
+            p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) \
+                if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
+
+            # Remove first column from visualization
+            if tab_vis_config["hide_start"]:
+                text = [layer[1:] for layer in text]
+                p = [layer[1:] for layer in p]
+
+            offset = 0 if tab_vis_config["hide_start"] else 1
+            input_len = len(input_tok)
+            output_len = len(output_tok)
+
+            # TODO: find nicer workaround
+            # Avoid empty tokens at start and end
+            if p[0] == [] and text[0] == []:
+                text[0] = [[""]] * (len(text[1]))
+                p[0] = [None] * (len(p[1]))
+            if p[-1] == [] and text[-1] == []:
+                text[-1] = [[""]] * (len(text[1]))
+                p[-1] = [None] * (len(p[1]))
+
+            fig = go.Figure(data=go.Heatmap(
+                z=p,
+                text=text,
+                xgap=2,
+                ygap=2,
+                x=[i - 0.5 for i in range(0, input_len + output_len)],
+                y=list(range(0, model.model_config.num_hidden_layers + 2)),
+                hovertemplate=TABLE_Z_FORMAT[tab_vis_config["colour"]] +
+                "<br><b>Layer</b>: %{y}" +
+                "<br><b>Token position</b>: %{x}" +
+                "<br><b>" + SECONDARY_DECODING_TEXT[vis_config["secondary_decoding"]] + "</b>: %{text}" +
+                "<extra></extra>",
+                texttemplate="%{text[0]}",
+                textfont={"size": tab_vis_config["font_size"]},
+                colorscale="blues",
+            ))
+            fig.update_layout(
+                margin={"l": 80, "r": 10, "t": 40, "b": 40},
+                height=(model.model_config.num_hidden_layers + 2) * TABLE_HEIGHT_INCREMENT,
+                width=(input_len + output_len) * TABLE_WIDTH_INCREMENT,
+                xaxis={
+                    "title_text": "", "tickmode": "linear", "titlefont": {"size": 20}, 
+                    "showgrid": False, "zeroline": False, "range": [-0.5, input_len + output_len - 2 + offset - 0.5]
+                },
+                yaxis={
+                    "title_text": "Transformer Layers", "tickmode": "linear", "titlefont": {"size": 20},
+                    "showgrid": False, "zeroline": False, "range": [-0.5, model.model_config.num_hidden_layers + 1.5]
+                },
+                plot_bgcolor="white",
+                template="plotly",
+                modebar_remove=["zoom", "pan", "zoomIn", "zoomOut", "autoScale"],
+                dragmode=False,
+            )
+
             fig.add_shape(
-                x0=vis_config["x"] + offset - 0.5, x1=vis_config["x"] + offset - 1.5,
-                y0=vis_config["y"] - 0.5, y1=vis_config["y"] + 0.5,
-                line_width=2, line_color="red"
+                x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
+                line_width=8, line_color="white"
+            )
+            fig.add_shape(
+                x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
+                line_width=2, line_color="#9C84D4"
+            )
+            fig.add_shape(
+                x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
+                line_width=8, line_color="white"
+            )
+            fig.add_shape(
+                x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
+                line_width=2, line_color="#9C84D4"
             )
 
-        return fig, model.tokenizer.decode(generated_output["sequences"].squeeze()[input_len:])
+            fig.add_hline(y=0.5, line_width=8, line_color="white")
+            fig.add_hline(y=0.5, line_width=2, line_color="#9C84D4")
+            fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color="white")
+            fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color="#9C84D4")
+
+            # Input/Output annotations
+            for i, tok in enumerate(input_tok[1 - offset:]):
+                fig.add_annotation(
+                    x=i, y=model.model_config.num_hidden_layers + 1.5, yshift=10, xshift=-TABLE_WIDTH_INCREMENT,
+                    xref="x", yref="y", yanchor="bottom",
+                    text=f"{tok}", hovertext=f"{tok}",
+                    bgcolor="#94CCF9", bordercolor="black", opacity=0.7,
+                    showarrow=False,
+                )
+                fig.add_annotation(
+                    x=i, y=-0.5, yshift=-20,
+                    xref="x", yref="y", yanchor="top",
+                    text=f"{tok}", hovertext=f"{tok}",
+                    bgcolor="#94CCF9", bordercolor="black", opacity=0.7,
+                    showarrow=False,
+                )
+            for i, tok in enumerate(output_tok):
+                shift = 0
+                if i >= output_len - 1:
+                    index = i
+                    i = output_len - 2
+                    shift = (index + 2 - output_len) * TABLE_WIDTH_INCREMENT
+                fig.add_annotation(
+                    x=input_len + i - 1 + offset, y=-0.5, yshift=-20, xshift=shift,
+                    xref="x", yref="y", yanchor="top",
+                    text=f"{tok}", hovertext=f"{tok}",
+                    bgcolor="#FEE69A", bordercolor="black", opacity=0.7,
+                    showarrow=False,
+                )
+
+            # Ablation reminders
+            for abl in run_config["ablations"]:
+                if abl["location"] == tab_vis_config["emb_type"]:
+                    fig.add_shape(
+                        x0=abl["target_token"] + offset - 0.5, x1=abl["target_token"] + offset - 1.5,
+                        y0=abl["target_layer"] - 0.5 + 1, y1=abl["target_layer"] + 0.5 + 1,
+                        line_width=2, line_color="red"
+                    )
+            # Injects reminders
+            for inj in run_config["injects"]:
+                if inj["location"] == tab_vis_config["emb_type"]:
+                    fig.add_shape(
+                        x0=inj["target_token"] + offset - 0.5, x1=inj["target_token"] + offset - 1.5,
+                        y0=inj["target_layer"] - 0.5 + 1, y1=inj["target_layer"] + 0.5 + 1,
+                        line_width=2, line_color="green"
+                    )
+            # Cell selector
+            if vis_config["x"] is not None and vis_config["y"] is not None:
+                fig.add_shape(
+                    x0=vis_config["x"] + offset - 0.5, x1=vis_config["x"] + offset - 1.5,
+                    y0=vis_config["y"] - 0.5, y1=vis_config["y"] + 0.5,
+                    line_width=2, line_color="orange"
+                )
+
+            return fig, model.tokenizer.decode(generated_output["sequences"].squeeze()[input_len:]), [], False
+        
+        except Exception as ex:
+            return no_update, no_update, [str(ex)], True
 
     @app.callback(
-        Output("sankey_graph", "figure"),
+        [
+            Output("sankey_graph", "figure"),
+            Output("display_alert", "children", allow_duplicate=True),
+            Output("display_alert", "is_open", allow_duplicate=True),
+        ],
         [
             Input("vis_config", "data"),
             Input("sankey_vis_config", "data"),
@@ -779,65 +789,69 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         prevent_initial_call=True,
     )
     def update_sankey(vis_config, sankey_vis_config, text, model_id, run_config, session_id):
-        if vis_config["source"] == "click" and vis_config["click"] == "sankey":
-            return no_update
+        try:
+            if vis_config["source"] == "click" and vis_config["click"] == "sankey":
+                return no_update, no_update, no_update
 
-        with models_lock:
-            if model_id not in models:
-                raise PreventUpdate
-            model = models[model_id]
-        if (
-            "x" not in vis_config or "y" not in vis_config or
-            vis_config["x"] is None or vis_config["y"] is None or
-            # Set threhsold to 1 when not visualizing token 0, to avoid visualization glitches
-            vis_config["x"] <= (1 if sankey_vis_config["hide_start"] else 0) or
-            vis_config["y"] <= (1 if sankey_vis_config["hide_start"] else 0)
-        ):
-            x, y = None, None
-        else:
-            x, y = vis_config["x"], vis_config["y"]
+            with models_lock:
+                if model_id not in models:
+                    raise PreventUpdate
+                model = models[model_id]
+            if (
+                "x" not in vis_config or "y" not in vis_config or
+                vis_config["x"] is None or vis_config["y"] is None or
+                # Set threhsold to 1 when not visualizing token 0, to avoid visualization glitches
+                vis_config["x"] <= (1 if sankey_vis_config["hide_start"] else 0) or
+                vis_config["y"] <= (1 if sankey_vis_config["hide_start"] else 0)
+            ):
+                x, y = None, None
+            else:
+                x, y = vis_config["x"], vis_config["y"]
 
-        sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
+            sankey_param = SankeyParameters(**sankey_vis_config["sankey_parameters"])
 
-        dfs, linkinfo, input_len, output_len = generate_sankey_info(
-            text, model_id, run_config, session_id,
-            vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"], vis_config["secondary_decoding"],
-        )
-
-        row_limit = sankey_param.rowlimit
-        sankey_param.rowlimit = row_limit \
-            if sankey_param.row_index - row_limit - 1 >= 0 or sankey_param.row_index == 0 \
-            else sankey_param.row_index
-
-        if sankey_vis_config["hide_start"]:
-            dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
-            linkinfo = {
-                key: [layer[1:] if layer is not None else None for layer in link]
-                for key, link in linkinfo.items()
-            }
-            linkinfo["attentions"] = [[
-                (layer2[1:] / layer2[1:].sum()) if sankey_vis_config["reapport_start"] else layer2[1:]
-                for layer2 in layer1
-            ] for layer1 in linkinfo["attentions"]]
-
-        token_offset = 1 if sankey_vis_config["hide_start"] else 0
-        if x is None and y is None:
-            sankey_param.row_index = model.model_config.num_hidden_layers + 1
-            sankey_param.token_index = input_len + output_len - token_offset - 2
-            sankey_param.rowlimit = sankey_param.row_index - row_limit
-            sankey_info = generate_complete_sankey(dfs, linkinfo, sankey_param, output_len)
-        else:
-            sankey_param.token_index -= token_offset
-            sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
-            sankey_info = generate_sankey(dfs, linkinfo, sankey_param)
-        hide_nodes = {
-            (abl["target_layer"] + 1, abl["target_token"] - token_offset): get_label_type_map(
-                EMB_TYPE_SANKEY_NODE_MAP, abl["location"]
+            dfs, linkinfo, input_len, output_len = generate_sankey_info(
+                text, model_id, run_config, session_id,
+                vis_config["strategy"], vis_config["res_contrib"], vis_config["norm"], vis_config["secondary_decoding"],
             )
-            for abl in run_config["ablations"]
-        }
-        fig = format_sankey(*sankey_info, linkinfo, sankey_param, hide_nodes)
-        return fig
+
+            row_limit = sankey_param.rowlimit
+            sankey_param.rowlimit = row_limit \
+                if sankey_param.row_index - row_limit - 1 >= 0 or sankey_param.row_index == 0 \
+                else sankey_param.row_index
+
+            if sankey_vis_config["hide_start"]:
+                dfs = {key: [layer[1:] for layer in df] for key, df in dfs.items()}
+                linkinfo = {
+                    key: [layer[1:] if layer is not None else None for layer in link]
+                    for key, link in linkinfo.items()
+                }
+                linkinfo["attentions"] = [[
+                    (layer2[1:] / layer2[1:].sum()) if sankey_vis_config["reapport_start"] else layer2[1:]
+                    for layer2 in layer1
+                ] for layer1 in linkinfo["attentions"]]
+
+            token_offset = 1 if sankey_vis_config["hide_start"] else 0
+            if x is None and y is None:
+                sankey_param.row_index = model.model_config.num_hidden_layers + 1
+                sankey_param.token_index = input_len + output_len - token_offset - 2
+                sankey_param.rowlimit = sankey_param.row_index - row_limit
+                sankey_info = generate_complete_sankey(dfs, linkinfo, sankey_param, output_len)
+            else:
+                sankey_param.token_index -= token_offset
+                sankey_param.rowlimit = sankey_param.row_index - sankey_param.rowlimit
+                sankey_info = generate_sankey(dfs, linkinfo, sankey_param)
+            hide_nodes = {
+                (abl["target_layer"] + 1, abl["target_token"] - token_offset): get_label_type_map(
+                    EMB_TYPE_SANKEY_NODE_MAP, abl["location"]
+                )
+                for abl in run_config["ablations"]
+            }
+            fig = format_sankey(*sankey_info, linkinfo, sankey_param, hide_nodes)
+            return fig, [], False
+
+        except Exception as ex:
+            return no_update, no_update, [str(ex)], True
 
     @app.callback(
         [

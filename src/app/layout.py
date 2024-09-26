@@ -18,6 +18,11 @@ def generate_layout():
                     _modifications(),
                 ])
             ]),
+            dbc.Alert(
+                ["Display error"],
+                id="display_alert",
+                color="alert", dismissable=True, fade=True, is_open=False,
+            ),
             html.Hr(),
             dbc.Row([
                 _settings(),
