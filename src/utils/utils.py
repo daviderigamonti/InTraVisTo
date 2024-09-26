@@ -255,7 +255,7 @@ class Decoder:
         # TODO: n_layers + 1 + 1 because we assume that the embedding layer/final norm layer are also being decoded
         n_layers = self.model_config.num_hidden_layers + 1
         return (
-            ( (n_layers - layer_n) * matrix_in + layer_n * (matrix_out) ) / n_layers
+            ( 1 - (layer_n / n_layers) ) * matrix_in + (layer_n / n_layers) * (matrix_out)
             for layer_n in range(0, n_layers + 1)
         )
 
@@ -263,7 +263,7 @@ class Decoder:
         # TODO: n_layers + 1 + 1 because we assume that the embedding layer/final norm layer are also being decoded
         n_layers = self.model_config.num_hidden_layers + 1
         return (
-            ( (n_layers ** 2 - layer_n ** 2) * matrix_in + (layer_n ** 2) * (matrix_out) ) / (n_layers ** 2)
+            ( 1 - (layer_n ** 2 / n_layers ** 2) ) * matrix_in + (layer_n ** 2 / n_layers ** 2) * (matrix_out)
             for layer_n in range(0, n_layers + 1)
         )
 
