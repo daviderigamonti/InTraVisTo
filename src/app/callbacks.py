@@ -357,6 +357,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         [
             State("mod_card_id", "data"),
             State({"type": "custom_emb", "index": ALL}, "value"),
+            State({"type": "custom_inj_type", "index": ALL}, "value"),
             State({"type": "custom_emb_location", "index": ALL}, "value"),
             State({"type": "custom_decoding", "index": ALL}, "value"),
             State({"type": "custom_norm", "index": ALL}, "value"),
@@ -369,7 +370,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         max_new_tok,
         abl_button, inj_button, mod_close_button,
         card_id,
-        custom_emb, custom_emb_location, custom_decoding, custom_norm,
+        custom_emb, custom_inj_type, custom_emb_location, custom_decoding, custom_norm,
         run_config, vis_config
     ):
         if not ctx.triggered_id:
@@ -385,12 +386,11 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 run_config["ablations"] = [abl for abl in run_config["ablations"] if abl["id"] != close_button_id]
             if ctx.triggered_id["type"] == "add_inj_button" and \
                     not all(v is None for v in inj_button) and \
-                    custom_emb and \
-                    custom_emb_location and \
-                    custom_decoding:
+                    custom_emb and custom_inj_type and custom_emb_location and custom_decoding and custom_norm:
                 run_config["injects"] = run_config["injects"] + [{
                     "id": card_id,
                     "text": custom_emb[0],
+                    "type": custom_inj_type[0],
                     "location": custom_emb_location[0],
                     "decoding": custom_decoding[0],
                     "norm": custom_norm[0],
@@ -768,7 +768,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             return fig, model.tokenizer.decode(generated_output["sequences"].squeeze()[input_len:]), [], False
         
         except Exception as ex:
-            return no_update, no_update, [str(ex)], True
+            return no_update, no_update, "Layout error:" + str(ex), True
 
     @app.callback(
         [
@@ -851,7 +851,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             return fig, [], False
 
         except Exception as ex:
-            return no_update, no_update, [str(ex)], True
+            return no_update, "Layout error:" + str(ex), True
 
     @app.callback(
         [
@@ -1038,6 +1038,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             extra_layout.generate_inject_card(
                 card_id=mod["id"],
                 text=mod["text"],
+                inj_type=mod["type"],
                 position=mod["location"],
                 decoding=mod["decoding"],
                 norm=mod["norm"],
@@ -1098,7 +1099,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             if model_id not in models:
                 raise PreventUpdate
             model = models[model_id]
-        run_config |= {"injects": []}
+        run_config |= {"injects": [], "ablations": []}
         return model.model_config.num_hidden_layers, run_config
 
 

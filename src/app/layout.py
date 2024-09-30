@@ -21,7 +21,7 @@ def generate_layout():
             dbc.Alert(
                 ["Display error"],
                 id="display_alert",
-                color="alert", dismissable=True, fade=True, is_open=False,
+                color="danger", dismissable=True, fade=True, is_open=False,
             ),
             html.Hr(),
             dbc.Row([

@@ -25,6 +25,14 @@ def generate_tooltip_children_layout(
         ], className="px-2 mb-3"),
         dbc.Row([
             dbc.Select(
+                options=INJ_TYPE_MAP,
+                value=DEFAULT_INJ_TYPE,
+                id={"type": "custom_inj_type", "index": True},
+                className="form-select mx-4 my-2 py-1 borderpx-1 w-75 text-white tooltip-bg"
+            ),
+        ]),
+        dbc.Row([
+            dbc.Select(
                 options=EMB_TYPE_MAP,
                 value=DEFAULT_EMB_TYPE,
                 id={"type": "custom_emb_location", "index": True},
@@ -67,16 +75,19 @@ def generate_tooltip_children_layout(
         ], className="px-2") if ablation_opt else None,
     ])
 
-def generate_inject_card(card_id, text, position, decoding, norm, token, layer):
+def generate_inject_card(card_id, text, inj_type, position, decoding, norm, token, layer):
     return dbc.Card([
         dbc.CardHeader([
-            f"Injecting {text}",
-            html.Button(
-                html.I(className="fas fa-times"),
-                className="btn btn-sm btn-danger float-end", id={"type": "mod_close_button", "index": card_id}
-            ),
+            dbc.Col([f"Injecting {text}"], className="col-10 card-header-text"),
+            dbc.Col([
+                html.Button(
+                    html.I(className="fas fa-times"),
+                    className="btn btn-sm btn-danger float-end", id={"type": "mod_close_button", "index": card_id}
+                )
+            ]),
         ]),
         dbc.CardBody([
+            html.P(f"Operation: {get_label_type_map(INJ_TYPE_MAP, inj_type)}"),
             html.P(f"Position: {get_label_type_map(EMB_TYPE_MAP, position)}"),
             html.P(f"Decoding: {get_label_type_map(DECODING_TYPE_MAP, decoding)}"),
             html.P(f"Normalisation: {get_label_type_map(INJ_NORM_MAP, norm)}"),
@@ -87,11 +98,13 @@ def generate_inject_card(card_id, text, position, decoding, norm, token, layer):
 def generate_ablation_card(card_id, position, token, layer):
     return dbc.Card([
         dbc.CardHeader([
-            f"Removing {get_label_type_map(EMB_TYPE_MAP, position)}",
-            html.Button(
-                html.I(className="fas fa-times"),
-                className="btn btn-sm btn-danger float-end", id={"type": "mod_close_button", "index": card_id}
-            ),
+            dbc.Col([f"Removing {get_label_type_map(EMB_TYPE_MAP, position)}"], className="col-10 card-header-text"),
+            dbc.Col([
+                html.Button(
+                    html.I(className="fas fa-times"),
+                    className="btn btn-sm btn-danger float-end", id={"type": "mod_close_button", "index": card_id}
+                )
+            ]),
         ]),
         dbc.CardBody([
             html.P(f"Layer: {layer}"),

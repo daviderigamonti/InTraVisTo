@@ -1,7 +1,7 @@
 import dataclasses
 import json
 
-from transformer_wrappers.wrappers import InjectPosition, AblationPosition
+from transformer_wrappers.wrappers import InjectPosition, AblationPosition, InjectionStrategy
 
 from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution, SecondaryDecodingType
 from utils.models import ModelInfo, NormalizationStep
@@ -101,6 +101,11 @@ NORM_MAP = [
 INJ_NORM_MAP = [
     {"label": "No normalisation", "value": NormalizationStep.NONE},
     {"label": "Normalise inject", "value": NormalizationStep.ONLY_NORM},
+]
+
+INJ_TYPE_MAP = [
+    {"label": "Replace completely", "value": InjectionStrategy.REPLACE},
+    {"label": "Replace main component", "value": InjectionStrategy.REMOVE_FIRST_COMPONENT},
 ]
 
 SECONDARY_DECODING_MAP = [

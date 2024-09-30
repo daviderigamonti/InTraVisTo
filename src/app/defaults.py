@@ -2,6 +2,8 @@ import dataclasses
 
 import plotly.graph_objects as go
 
+from transformer_wrappers.wrappers import InjectionStrategy
+
 from utils.utils import EmbeddingsType, DecodingType, ProbabilityType, ResidualContribution
 from utils.models import ModelInfo, NormalizationStep
 from utils.sankey import SankeyParameters, SizeAdapt, AttentionHighlight
@@ -14,6 +16,7 @@ DEFAULT_PROB_TYPE = ProbabilityType.ARGMAX
 DEFAULT_RES_TYPE = ResidualContribution.NORM
 DEFAULT_NORM = NormalizationStep.NORM_SCALE
 DEFAULT_INJ_NORM = NormalizationStep.ONLY_NORM
+DEFAULT_INJ_TYPE = InjectionStrategy.REMOVE_FIRST_COMPONENT
 DEFAULT_SECONDARY_DECODING = SecondaryDecodingType.TOP_K
 
 DEFAULT_ATTENTION = AttentionHighlight.TOP_K
