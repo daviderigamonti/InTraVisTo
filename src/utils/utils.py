@@ -273,28 +273,45 @@ class Decoder:
         norm
     ):
         decoding_matrix = self.decoding_matrix[decoding]()
-        return [
+        decoded_layers = [
             [
-                {
-                    k: SECONDARY_DECODING_STRATEGY[secondary_decoding](
-                        tokenizer=self.tokenizer, emb=emb, decoding_matrix=dm, normalization=norm,
-                    )
-                    for k, emb in cell.get_embeddings(norm).items()
-                }
+                self.decode_cell(cell, dm, secondary_decoding, norm)
                 for cell in layer
-            ] for layer, dm in zip(layers, decoding_matrix)
+            ] for layer, dm in zip(layers[:-1], decoding_matrix)
         ]
+        # TODO: Workaround to avoid double normalization for last layer
+        dm = next(decoding_matrix)
+        return decoded_layers + [[
+            self.decode_cell(cell, dm, secondary_decoding, norm=None)
+            for cell in layers[-1]
+        ]]
+
+    def decode_cell(
+        self, cell: CellWrapper, decoding_matrix, secondary_decoding: SecondaryDecodingType, norm
+    ):
+        return {
+            k: SECONDARY_DECODING_STRATEGY[secondary_decoding](
+                tokenizer=self.tokenizer, emb=emb, decoding_matrix=decoding_matrix, normalization=norm,
+            )
+            for k, emb in cell.get_embeddings().items()
+        }
 
     def compute_probabilities(
         self, layers: List[LayerWrapper], decoding, residual_contribution: ResidualContribution, norm
     ):
         decoding_matrix = self.decoding_matrix[decoding]()
-        return [
+        computed_layers = [
             [
                 self.compute_cell(cell, dm, residual_contribution, norm)
                 for cell in layer
-            ] for layer, dm in zip(layers, decoding_matrix)
+            ] for layer, dm in zip(layers[:-1], decoding_matrix)
         ]
+        # TODO: Workaround to avoid double normalization for last layer
+        dm = next(decoding_matrix)
+        return computed_layers + [[
+            self.compute_cell(cell, dm, residual_contribution, norm=None)
+            for cell in layers[-1]
+        ]]
 
     def compute_cell(
         self, cell: CellWrapper, decoding_matrix, residual_contribution: ResidualContribution, norm: bool

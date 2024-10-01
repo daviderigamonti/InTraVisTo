@@ -177,7 +177,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             for token_id, (tok_hs, tok_att, tok_ffnn, tok_inter) in enumerate(
                 zip(layer_hs, layer_att, layer_ffnn, layer_inter)
             ):
-                cell = CellWrapper(layer_number=layer_id, token_number=token_id)
+                cell = CellWrapper(layer_number=layer_id + 1, token_number=token_id)
                 cell.add_embedding(tok_hs, EmbeddingsType.BLOCK_OUTPUT)
                 cell.add_embedding(tok_att, EmbeddingsType.POST_ATTENTION)
                 cell.add_embedding(tok_ffnn, EmbeddingsType.POST_FF)
