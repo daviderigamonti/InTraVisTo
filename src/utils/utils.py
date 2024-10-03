@@ -250,6 +250,12 @@ class Decoder:
             DecodingType.QUADRATIC:
                 lambda: self.quadratic_interpolation(self.input_embedding.weight, self.output_embedding.weight),
         }
+        # Optimization for models that have equal input/output embeddings
+        if torch.equal(self.input_embedding.weight, self.output_embedding.weight):
+            self.decoding_matrix |= {
+                DecodingType.LINEAR: self.decoding_matrix[DecodingType.INPUT],
+                DecodingType.QUADRATIC: self.decoding_matrix[DecodingType.INPUT],
+            }
 
     def linear_interpolation(self, matrix_in, matrix_out):
         # TODO: n_layers + 1 + 1 because we assume that the embedding layer/final norm layer are also being decoded
