@@ -5,4 +5,4 @@ numpy==1.26.4
 pandas==2.2.2
 plotly==5.22.0
 torch==2.2.1
-transformers==4.43.3
+transformers==4.44.2
