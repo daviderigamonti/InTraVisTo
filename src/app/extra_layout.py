@@ -45,7 +45,7 @@ def generate_tooltip_children_layout(
         ),
         dbc.Row([
             dbc.Select(
-                options=DECODING_TYPE_MAP,
+                options=INJ_DECODING_TYPE_MAP,
                 value=DEFAULT_DECODING,
                 id={"type": "custom_decoding", "index": True},
                 className="form-select mx-4 my-2 py-1 borderpx-1 w-75 text-white tooltip-bg"
@@ -89,7 +89,7 @@ def generate_inject_card(card_id, text, inj_type, position, decoding, norm, toke
         dbc.CardBody([
             html.P(f"Operation: {get_label_type_map(INJ_TYPE_MAP, inj_type)}"),
             html.P(f"Position: {get_label_type_map(EMB_TYPE_MAP, position)}"),
-            html.P(f"Decoding: {get_label_type_map(DECODING_TYPE_MAP, decoding)}"),
+            html.P(f"Decoding: {get_label_type_map(INJ_DECODING_TYPE_MAP, decoding)}"),
             html.P(f"Normalisation: {get_label_type_map(INJ_NORM_MAP, norm)}"),
             html.P(f"Layer: {layer}, Token: {token}"),
         ])

@@ -24,6 +24,7 @@ class DecodingType(str, Enum):
     OUTPUT = "output"
     LINEAR = "linear_interpolation"
     QUADRATIC = "quadratic_interpolation"
+    MAX_IN_OUT = "max_in_out"
 
 class ResidualContribution(str, Enum):
     NORM = "norm"
@@ -32,6 +33,43 @@ class ResidualContribution(str, Enum):
 class SecondaryDecodingType(str, Enum):
     TOP_K = "top_k"
     ITERATIVE = "iterative"
+
+
+def decoding_matmul(a: torch.Tensor, b: torch.Tensor):
+    if isinstance(a, DecodingMaxMatrix) or isinstance(b, DecodingMaxMatrix):
+        if isinstance(a, DecodingMaxMatrix):
+            logits_in = torch.matmul(a, b)
+            logits_out = torch.matmul(a.b_matrix, b)
+        else:
+            logits_in = torch.matmul(a, b)
+            logits_out = torch.matmul(a, b.b_matrix)
+        probs_in = torch.nn.functional.softmax(logits_in, dim=-1)
+        probs_out = torch.nn.functional.softmax(logits_out, dim=-1)
+        return (logits_in if probs_in.max() / probs_out.max() > 1 else logits_out)
+    return torch.matmul(a, b)
+
+# TODO: possibly atrocius
+class DecodingMaxMatrix(torch.Tensor):
+    @staticmethod 
+    def __new__(cls, a_matrix, b_matrix, *args, **kwargs): 
+        return super().__new__(cls, a_matrix, *args, **kwargs) 
+      
+    def __init__(self, a_matrix, b_matrix=None): 
+        self.b_matrix = b_matrix 
+
+    def clone(self, *args, **kwargs): 
+        return DecodingMaxMatrix(super().clone(*args, **kwargs), self.b_matrix)
+
+    def to(self, *args, **kwargs):
+        new_matrix = super().to(*args, **kwargs)
+        new_matrix.b_matrix = self.b_matrix.to(*args, **kwargs)
+        return new_matrix
+
+    @property
+    def T(self):
+        new_matrix = super().T
+        new_matrix.b_matrix = self.b_matrix.T
+        return new_matrix
 
 
 def _res_contrib_norm(residual, x, embs, **kwargs): # pylint:disable=unused-argument
@@ -61,7 +99,7 @@ def _iterative_decoding(
     secondary_tokens = []
     norms = []
     for rep in range(max_rep):
-        logits = torch.matmul(normalization(emb), decoding_matrix.T)
+        logits = decoding_matmul(normalization(emb), decoding_matrix.T)
         token_id = logits.argmax()
         real_embed = decoding_matrix[token_id]
         secondary_token = tokenizer.convert_ids_to_tokens([token_id])[0]
@@ -80,7 +118,7 @@ def _iterative_decoding(
 def _topk_decoding(tokenizer, emb, decoding_matrix, k: int = 5, **kwargs):  # pylint:disable=unused-argument
     return [
         clean_text(tokenizer.convert_ids_to_tokens([topk_id])[0])
-        for topk_id in torch.topk(torch.matmul(emb, decoding_matrix.T), k=k, sorted=True).indices
+        for topk_id in torch.topk(decoding_matmul(emb, decoding_matrix.T), k=k, sorted=True).indices
     ]
 
 # TODO: make more efficient/general
@@ -131,7 +169,7 @@ class CellWrapper:
         return self.probabilities[decoding_strategy]
 
     def get_logits_info(self, emb_type: EmbeddingsType, decoding_matrix, norm = None):
-        logits = torch.matmul(self.get_embedding(emb_type, norm), decoding_matrix.T).float()
+        logits = decoding_matmul(self.get_embedding(emb_type, norm), decoding_matrix.T).float()
         probs = torch.nn.functional.softmax(logits, dim=-1)
         token_id = logits.argmax()
         return logits, probs, token_id
@@ -249,12 +287,18 @@ class Decoder:
                 lambda: self.linear_interpolation(self.input_embedding.weight, self.output_embedding.weight),
             DecodingType.QUADRATIC:
                 lambda: self.quadratic_interpolation(self.input_embedding.weight, self.output_embedding.weight),
+            DecodingType.MAX_IN_OUT:
+                lambda: ( 
+                    DecodingMaxMatrix(self.input_embedding.weight, b_matrix=self.output_embedding.weight)
+                    for _ in  range(self.model_config.num_hidden_layers + 2)
+                ),
         }
         # Optimization for models that have equal input/output embeddings
         if torch.equal(self.input_embedding.weight, self.output_embedding.weight):
             self.decoding_matrix |= {
                 DecodingType.LINEAR: self.decoding_matrix[DecodingType.INPUT],
                 DecodingType.QUADRATIC: self.decoding_matrix[DecodingType.INPUT],
+                DecodingType.MAX_IN_OUT: self.decoding_matrix[DecodingType.INPUT],
             }
 
     def linear_interpolation(self, matrix_in, matrix_out):

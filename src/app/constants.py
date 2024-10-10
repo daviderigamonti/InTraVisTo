@@ -48,7 +48,12 @@ ABLATION_TRANSLATE = {
 DECODING_TYPE_MAP = [
     {"label": "Output Decoder", "value": DecodingType.OUTPUT},
     {"label": "Linear Interpolation", "value": DecodingType.LINEAR},
-    {"label": "Quadratic Interpolation", "value": DecodingType.QUADRATIC},
+    {"label": "Max Probability", "value": DecodingType.MAX_IN_OUT},
+    {"label": "Input Encoder", "value": DecodingType.INPUT},
+]
+INJ_DECODING_TYPE_MAP = [
+    {"label": "Output Decoder", "value": DecodingType.OUTPUT},
+    {"label": "Linear Interpolation", "value": DecodingType.LINEAR},
     {"label": "Input Encoder", "value": DecodingType.INPUT},
 ]
 
