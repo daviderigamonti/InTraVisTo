@@ -633,6 +633,12 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 layers=layers, strategy=vis_config["strategy"], residual_contribution=vis_config["res_contrib"],
                 norm=norm, norm_id=vis_config["norm"], decoder=model.decoder, _session_id=session_id,
             )
+
+            # Extract information for max probability decoders
+            p_max = extract_key_from_processed_layers(p, ProbabilityType.DECODER_MAX)
+            p_max = extract_key_from_processed_layers(p_max, tab_vis_config["emb_type"])
+
+            # Extract current probability
             p = extract_key_from_processed_layers(p, tab_vis_config["colour"])
             p = extract_key_from_processed_layers(p, tab_vis_config["emb_type"]) \
                 if tab_vis_config["colour"] in [ProbabilityType.ARGMAX, ProbabilityType.ENTROPY] else p
@@ -740,6 +746,18 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     bgcolor="#FEE69A", bordercolor="black", opacity=0.7,
                     showarrow=False,
                 )
+
+            # Max decoding bookmarks
+            if any(any(l) for l in p_max):
+                fig.update_layout(shapes=fig.layout.shapes + tuple([
+                    dict(
+                        type="path",
+                        path=
+                            f"M {j + 0.482} {i + 0.22} L {j + 0.482} {i + 0.45} L {j + 0.4} {i + 0.45} Z" if c == DecodingType.OUTPUT else 
+                            f"M {j + 0.482} {i - 0.22} L {j + 0.482} {i - 0.45} L {j + 0.4} {i - 0.45} Z",
+                        line_width=1, line_color="gold", fillcolor="gold",
+                    ) for i, l in enumerate(p_max) for j, c in enumerate(l[1 - offset:])
+                ]))
 
             # Ablation reminders
             for abl in run_config["ablations"]:

@@ -18,6 +18,7 @@ class ProbabilityType(str, Enum):
     FFNN_RES_PERCENT = "ffnn_res_percent"
     ENTROPY = "entropy"
     ARGMAX = "argmax"
+    DECODER_MAX = "decoder_max"
 
 class DecodingType(str, Enum):
     INPUT = "input"
@@ -45,8 +46,9 @@ def decoding_matmul(a: torch.Tensor, b: torch.Tensor):
             logits_out = torch.matmul(a, b.b_matrix)
         probs_in = torch.nn.functional.softmax(logits_in, dim=-1)
         probs_out = torch.nn.functional.softmax(logits_out, dim=-1)
-        return (logits_in if probs_in.max() / probs_out.max() > 1 else logits_out)
-    return torch.matmul(a, b)
+        r = probs_in.max() - probs_out.max()
+        return (logits_in if r > 0 else logits_out), r
+    return torch.matmul(a, b), None
 
 # TODO: possibly atrocius
 class DecodingMaxMatrix(torch.Tensor):
@@ -98,8 +100,12 @@ def _iterative_decoding(
 ):
     secondary_tokens = []
     norms = []
+    # TODO: temporary
+    if isinstance(decoding_matrix, DecodingMaxMatrix):
+        logits, r = decoding_matmul(normalization(emb), decoding_matrix.T)
+        decoding_matrix = torch.Tensor(decoding_matrix if r > 0 else decoding_matrix.b_matrix)
     for rep in range(max_rep):
-        logits = decoding_matmul(normalization(emb), decoding_matrix.T)
+        logits = torch.matmul(normalization(emb), decoding_matrix.T)
         token_id = logits.argmax()
         real_embed = decoding_matrix[token_id]
         secondary_token = tokenizer.convert_ids_to_tokens([token_id])[0]
@@ -115,10 +121,10 @@ def _iterative_decoding(
         emb = emb - real_embed
     return [clean_text(s) for s in secondary_tokens]
 
-def _topk_decoding(tokenizer, emb, decoding_matrix, k: int = 5, **kwargs):  # pylint:disable=unused-argument
+def _topk_decoding(tokenizer, emb, decoding_matrix, normalization, k: int = 5, **kwargs):  # pylint:disable=unused-argument
     return [
         clean_text(tokenizer.convert_ids_to_tokens([topk_id])[0])
-        for topk_id in torch.topk(decoding_matmul(emb, decoding_matrix.T), k=k, sorted=True).indices
+        for topk_id in torch.topk(decoding_matmul(normalization(emb), decoding_matrix.T)[0], k=k, sorted=True).indices
     ]
 
 # TODO: make more efficient/general
@@ -169,10 +175,11 @@ class CellWrapper:
         return self.probabilities[decoding_strategy]
 
     def get_logits_info(self, emb_type: EmbeddingsType, decoding_matrix, norm = None):
-        logits = decoding_matmul(self.get_embedding(emb_type, norm), decoding_matrix.T).float()
+        logits, r = decoding_matmul(self.get_embedding(emb_type, norm), decoding_matrix.T)
+        logits = logits.float()
         probs = torch.nn.functional.softmax(logits, dim=-1)
         token_id = logits.argmax()
-        return logits, probs, token_id
+        return logits, probs, token_id, r
 
 class LayerWrapper:
     def __init__(
@@ -332,7 +339,7 @@ class Decoder:
         # TODO: Workaround to avoid double normalization for last layer
         dm = next(decoding_matrix)
         return decoded_layers + [[
-            self.decode_cell(cell, dm, secondary_decoding, norm=None)
+            self.decode_cell(cell, dm, secondary_decoding, norm=lambda x: x)
             for cell in layers[-1]
         ]]
 
@@ -371,14 +378,18 @@ class Decoder:
         entropy = {}
         argmax =  {}
         embs = {}
+        decoder_max = {}
         for k in cell.embeddings.keys():
-            _, probs, pred_id = cell.get_logits_info(k, decoding_matrix, norm)
+            _, probs, pred_id, r = cell.get_logits_info(k, decoding_matrix, norm)
             embs[k] = cell.get_embedding(k)
             entropy[k] = -torch.sum(probs * torch.log(probs)).detach().cpu()
             argmax[k] = probs[pred_id].detach().cpu()
+            # TODO: temporary
+            decoder_max[k] = (DecodingType.INPUT if r > 0 else DecodingType.OUTPUT) if r else None
 
         res[ProbabilityType.ENTROPY] = entropy
         res[ProbabilityType.ARGMAX] = argmax
+        res[ProbabilityType.DECODER_MAX] = decoder_max
         att_res_percent = torch.tensor(0.0) \
             if EmbeddingsType.BLOCK_INPUT not in cell.embeddings \
                 or EmbeddingsType.POST_ATTENTION not in cell.embeddings \
