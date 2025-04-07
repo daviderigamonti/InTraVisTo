@@ -103,7 +103,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                         token=inject["target_token"],
                         position=INJECT_TRANSLATE[inject["location"]],
                         embedding=emb,
-                        strategy=InjectionStrategy.REMOVE_FIRST_COMPONENT,
+                        strategy=inject["type"],
                         decoding_matrix=encoding,
                         decoding_norm=norm
                     )
