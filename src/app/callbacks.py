@@ -244,8 +244,8 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
         )
         linkinfo["diff"] = extract_key_from_processed_layers(token_diffs, EmbeddingsType.BLOCK_OUTPUT)
 
-        linkinfo["attn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)
-        linkinfo["ffnn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)
+        linkinfo["attn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.ATT_RES_PERCENT)[1:]
+        linkinfo["ffnn_res_percent"] = extract_key_from_processed_layers(p, ProbabilityType.FFNN_RES_PERCENT)[1:]
 
         for abl in run_config["ablations"]:
             if abl["location"] == EmbeddingsType.POST_ATTENTION:
@@ -257,9 +257,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
 
         linkinfo |= {
             "kl_diff_in-int": [
-                torch.stack(layers[i].get_kldiff(
-                    layers[i-1],
-                    EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT,
+                torch.stack(layers[i-1].get_kldiff(
+                    layers[i],
+                    EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL,
                     norm,
                 ), dim=0)
                 for i in range(1, len(layers)-1)
@@ -267,7 +267,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "kl_diff_att-int": [
                 torch.stack(layer.get_kldiff(
                     layer,
-                    EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_ATTENTION,
+                    EmbeddingsType.POST_ATTENTION, EmbeddingsType.POST_ATTENTION_RESIDUAL,
                     norm,
                 ), dim=0)
                 for layer in layers[1:-1]
@@ -275,7 +275,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "kl_diff_int-out": [
                 torch.stack(layer.get_kldiff(
                     layer,
-                    EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                    EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.BLOCK_OUTPUT,
                     norm,
                 ), dim=0)
                 for layer in layers[1:-1]
@@ -283,7 +283,7 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "kl_diff_int-ff": [
                 torch.stack(layer.get_kldiff(
                     layer,
-                    EmbeddingsType.POST_FF, EmbeddingsType.POST_ATTENTION_RESIDUAL,
+                    EmbeddingsType.POST_ATTENTION_RESIDUAL, EmbeddingsType.POST_FF,
                     norm,
                 ), dim=0)
                 for layer in layers[1:-1]
@@ -291,14 +291,14 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             "kl_diff_ff-out": [
                 torch.stack(layer.get_kldiff(
                     layer,
-                    EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.POST_FF,
+                    EmbeddingsType.POST_FF, EmbeddingsType.BLOCK_OUTPUT,
                     norm,
                 ), dim=0)
                 for layer in layers[1:-1]
             ],
             "kl_diff_out-out": [None] * (len(layers) - 2) + [
-                torch.stack(layers[-1].get_kldiff(
-                    layers[-2],
+                torch.stack(layers[-2].get_kldiff(
+                    layers[-1],
                     EmbeddingsType.BLOCK_OUTPUT, EmbeddingsType.BLOCK_OUTPUT,
                     norm,
                 ), dim=0)
@@ -695,13 +695,17 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                 dragmode=False,
             )
 
+            color_blues_max = "#08306B"
+            color_blues_min = "#F7FBFF"
+            color_blues_mid = "#6AAED6"
+
             fig.add_shape(
                 x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
                 line_width=8, line_color="white"
             )
             fig.add_shape(
                 x0=input_len+offset-1.5, x1=input_len+offset-1.5, y0=-1, y1=0.5,
-                line_width=2, line_color="#9C84D4"
+                line_width=2, line_color=color_blues_max
             )
             fig.add_shape(
                 x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
@@ -709,13 +713,13 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
             )
             fig.add_shape(
                 x0=input_len+offset-2.5, x1=input_len+offset-2.5, y0=0.5, y1=model.model_config.num_hidden_layers + 1.5,
-                line_width=2, line_color="#9C84D4"
+                line_width=2, line_color=color_blues_max
             )
 
             fig.add_hline(y=0.5, line_width=8, line_color="white")
-            fig.add_hline(y=0.5, line_width=2, line_color="#9C84D4")
+            fig.add_hline(y=0.5, line_width=2, line_color=color_blues_max)
             fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=8, line_color="white")
-            fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color="#9C84D4")
+            fig.add_hline(y=model.model_config.num_hidden_layers + 0.5, line_width=2, line_color=color_blues_max)
 
             # Input/Output annotations
             for i, tok in enumerate(input_tok[1 - offset:]):
@@ -753,9 +757,9 @@ def generate_callbacks(app, cache, models, models_lock, model_loading_lock):
                     dict(
                         type="path",
                         path=
-                            f"M {j + 0.482} {i + 0.22} L {j + 0.482} {i + 0.45} L {j + 0.4} {i + 0.45} Z" if c == DecodingType.OUTPUT else 
-                            f"M {j + 0.482} {i - 0.22} L {j + 0.482} {i - 0.45} L {j + 0.4} {i - 0.45} Z",
-                        line_width=1, line_color="gold", fillcolor="gold",
+                            f"M {j + 0.482} {i + 0.20} L {j + 0.482} {i + 0.45} L {j + 0.38} {i + 0.45} Z" if c == DecodingType.OUTPUT else 
+                            f"M {j + 0.482} {i - 0.20} L {j + 0.482} {i - 0.45} L {j + 0.38} {i - 0.45} Z",
+                        line_width=1, line_color=color_blues_mid, fillcolor=color_blues_mid,
                     ) for i, l in enumerate(p_max) for j, c in enumerate(l[1 - offset:])
                 ]))
 

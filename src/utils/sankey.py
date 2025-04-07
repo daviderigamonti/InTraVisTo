@@ -365,7 +365,7 @@ def format_sankey(un, ov, vl, types, lab, elmap, linkinfo, sankey_parameters: Sa
 
     # Add kl divergence values to residual links between consecutive layers
     kl_values = [
-        linkinfo[LINK_KL_MAP[typ]][math.floor(revmap_x[el])][math.floor(revmap_y[el])]
+        linkinfo[LINK_KL_MAP[typ]][math.floor(revmap_x[el])][math.ceil(revmap_y[el])]
         if typ not in ["att_in"] else None
         for typ, el in zip(types, un)
     ]
